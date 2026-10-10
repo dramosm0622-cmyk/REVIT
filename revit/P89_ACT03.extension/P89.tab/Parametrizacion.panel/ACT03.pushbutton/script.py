@@ -14,7 +14,7 @@ Hace en el proyecto Revit abierto, en un solo paso:
      Cimentaciones del plano P89-2022 (19 zapatas, 19 columnas, vigas VC, correas).
   5. Crea el Schedule multicategoria P89_ACT03_VALIDACION y lo abre.
 
-Uso: pyRevit (boton ACT03) o RevitPythonShell (abrir y ejecutar este archivo).
+Uso: Dynamo (abrir ACT03_PARAMETRIZACION.dyn y Ejecutar), pyRevit o RevitPythonShell.
 Revit 2023 o superior. Abrir un proyecto NUEVO con la plantilla ESTRUCTURAL metrica.
 Se puede ejecutar varias veces: no duplica parametros, tipos ni elementos.
 """
@@ -23,29 +23,38 @@ __doc__ = "Actividad 3 BIM Parametrizacion - crea parametros, modelo, formula y 
 
 import os
 import glob
-import tempfile
 import clr
 clr.AddReference("RevitAPI")
 clr.AddReference("RevitAPIUI")
+clr.AddReference("System")
+import System
 from Autodesk.Revit.DB import (
     BuiltInCategory, BuiltInParameter, CategorySet, ElementId, ElementType, Family,
-    FamilySymbol, FilteredElementCollector, GroupTypeId, IFamilyLoadOptions,
+    FamilySymbol, FilteredElementCollector, GroupTypeId,
     InstanceBinding, Level, Line, Grid, Material, SaveAsOptions, ScheduleFieldType,
     ScheduleSortGroupField, ScheduleFilter, ScheduleFilterType, StorageType,
     Transaction, TypeBinding, UnitTypeId, UnitUtils, ViewSchedule, XYZ)
 from Autodesk.Revit.DB.Structure import StructuralType, StructuralInstanceUsage
 
-uiapp = __revit__  # noqa: F821  (lo define pyRevit / RevitPythonShell)
+try:
+    uiapp = __revit__  # pyRevit / RevitPythonShell
+    EN_DYNAMO = False
+except NameError:
+    # Dynamo (nodo Python Script)
+    clr.AddReference("RevitServices")
+    from RevitServices.Persistence import DocumentManager
+    from RevitServices.Transactions import TransactionManager
+    uiapp = DocumentManager.Instance.CurrentUIApplication
+    TransactionManager.Instance.ForceCloseTransaction()
+    EN_DYNAMO = True
 app = uiapp.Application
 uidoc = uiapp.ActiveUIDocument
 doc = uidoc.Document
 
-# Si el script se ejecuta desde RevitPythonShell y no encuentra el .txt,
-# escriba aqui la ruta completa del archivo de parametros compartidos:
-RUTA_TXT_MANUAL = r""
 
 # ---- DATOS GENERADOS DESDE LA MATRIZ (no editar a mano salvo CORREAS) ----
 NOMBRE_TXT = 'PARAM_ACT03_ParametrosCompartidos.txt'
+TXT_COMPARTIDOS = "# This is a Revit shared parameter file.\r\n# Do not edit manually.\r\n*META\tVERSION\tMINVERSION\r\nMETA\t2\t1\r\n*GROUP\tID\tNAME\r\nGROUP\t1\tP89_PAC_Comunes\r\nGROUP\t2\tP89_Particulares\r\n*PARAM\tGUID\tNAME\tDATATYPE\tDATACATEGORY\tGROUP\tVISIBLE\tDESCRIPTION\tUSERMODIFIABLE\tHIDEWHENNOEXIST\r\nPARAM\t85472c8c-6490-518b-a29e-b885faa36d93\tPAC_Codigo_Elemento\tTEXT\t\t1\t1\tIdentificador unico del elemento colocado, nomenclatura OBJETO-TIPO-EJE (ej. ZAP-ZT1-1-B, COL-C30X30-6-D, VCI-VC-E-1/3, COR-PHR-01).\t1\t0\r\nPARAM\td86a8141-07c2-5163-b0c5-cc8c18d257b1\tPAC_Material_Estructural\tTEXT\t\t1\t1\tDescripcion del material constitutivo del elemento (concreto reforzado / acero laminado en frio).\t1\t0\r\nPARAM\t79d71a23-b7ca-56d3-bbf6-1a80172370d0\tPAC_Resistencia_MPa\tNUMBER\t\t1\t1\tResistencia de diseno del material: f'c del concreto o Fy del acero, en MPa.\t1\t0\r\nPARAM\tcdd84e08-b753-5092-962e-e539fcc67cef\tPAC_Nivel_Referencia\tTEXT\t\t1\t1\tNivel del proyecto al que se asocia el elemento (N+0,00 / N+3,05 / N+6,05).\t1\t0\r\nPARAM\tb6c0a61c-414b-57c4-b1b4-1013d12b3ee6\tPAC_Clasificacion_IFC_Uniclass\tTEXT\t\t1\t1\tClase IFC 4 y codigo Uniclass 2015 del objeto (ej. IfcFooting.PAD_FOOTING | EF_20_10).\t1\t0\r\nPARAM\t066e6011-2a6d-5560-b4db-2e0ed2444dd1\tPAC_Norma_Diseno\tTEXT\t\t1\t1\tNorma bajo la cual se diseno y se verifica el paciente.\t1\t0\r\nPARAM\t3fc88ade-62a9-5490-9b81-ab62f9bf5ae9\tZAP_Lado_B\tLENGTH\t\t2\t1\tLado en planta de la zapata cuadrada (B = L). Controla la geometria: Anchura = Longitud = ZAP_Lado_B.\t1\t0\r\nPARAM\t965537a6-536c-58a0-bd63-db59f71be075\tZAP_Espesor_h\tLENGTH\t\t2\t1\tAltura del dado de la zapata. Controla el espesor nativo de la familia.\t1\t0\r\nPARAM\t8d34a176-490a-5403-83f0-6fa71f5013a4\tZAP_Volumen_Concreto\tVOLUME\t\t2\t1\tVolumen de concreto de la zapata, calculado por formula.\t1\t0\r\nPARAM\td75f8334-2783-55cb-9ec8-23c7e389d540\tCOL_Seccion_bxh\tTEXT\t\t2\t1\tSeccion transversal de la columna en texto normalizado (ej. 0,30x0,30).\t1\t0\r\nPARAM\t40c3badd-65e0-5065-a86f-611a6c6a2664\tCOL_Altura_Libre\tLENGTH\t\t2\t1\tAltura libre: elevacion del nivel de remate menos el nivel de arranque (N+0,00) menos el peralte de la viga superior (0,30 m). 2,75 m o 5,75 m segun el eje.\t1\t0\r\nPARAM\t0a069ea7-3f17-5c14-a363-d5b9df101717\tCOL_Refuerzo_Longitudinal\tTEXT\t\t2\t1\tCantidad y diametro de barras longitudinales y estribos.\t1\t0\r\nPARAM\t4ec9bf06-1bab-5300-8692-932dc6dfeccf\tVCI_Seccion_bxh\tTEXT\t\t2\t1\tSeccion transversal de la viga de amarre (0,30x0,30).\t1\t0\r\nPARAM\t3d771281-4586-5fcc-891a-b316c46ab842\tVCI_Eje_Estructural\tTEXT\t\t2\t1\tEje de la reticula sobre el que se localiza el tramo de viga (ej. A, 1).\t1\t0\r\nPARAM\t2c83e82a-5e4d-5443-aa71-6c35dfbc77c3\tVCI_Refuerzo\tTEXT\t\t2\t1\tBarras longitudinales y separacion de estribos del tramo.\t1\t0\r\nPARAM\tb46100c4-1696-5b8f-bf7b-367e3aa6a906\tCOR_Designacion_Perfil\tTEXT\t\t2\t1\tDenominacion comercial del perfil laminado en frio.\t1\t0\r\nPARAM\t331132ab-4306-5dd4-b1e3-66230ec73d80\tCOR_Espesor_Lamina\tLENGTH\t\t2\t1\tCalibre / espesor de la lamina del perfil.\t1\t0\r\nPARAM\td1420baf-85ea-5cb2-b69f-0f498712487d\tCOR_Separacion\tLENGTH\t\t2\t1\tSeparacion centro a centro entre correas consecutivas.\t1\t0\r\n"
 NOMBRE_SCHEDULE = 'P89_ACT03_VALIDACION'
 NORMA = 'NSR-10 Titulos B y C'
 NIVELES = [('N+0,00', 0.0), ('N+3,05', 3.05), ('N+6,05', 6.05)]
@@ -312,25 +321,10 @@ BIC = {
 
 # ---------------------------------------------------------------- utilidades
 def ruta_txt():
-    cands = []
-    try:
-        cands.append(os.path.join(os.path.dirname(__file__), NOMBRE_TXT))
-    except NameError:
-        pass
-    if RUTA_TXT_MANUAL:
-        cands.insert(0, RUTA_TXT_MANUAL)
-    for c in cands:
-        if os.path.exists(c):
-            return c
-    # ultimo recurso: dialogo para elegir el archivo
-    clr.AddReference("System.Windows.Forms")
-    from System.Windows.Forms import OpenFileDialog, DialogResult
-    dlg = OpenFileDialog()
-    dlg.Title = "Seleccione " + NOMBRE_TXT
-    dlg.Filter = "Parametros compartidos (*.txt)|*.txt"
-    if dlg.ShowDialog() == DialogResult.OK:
-        return dlg.FileName
-    raise Exception("No se encontro " + NOMBRE_TXT)
+    """Escribe el archivo de parametros compartidos (embebido) en la carpeta temporal."""
+    ruta = os.path.join(System.IO.Path.GetTempPath(), NOMBRE_TXT)
+    System.IO.File.WriteAllText(ruta, TXT_COMPARTIDOS, System.Text.Encoding.Unicode)
+    return ruta
 
 
 def leer_definiciones(path):
@@ -433,16 +427,6 @@ def cargar_de_biblioteca(bic, claves):
     return None
 
 
-class OpcionesCarga(IFamilyLoadOptions):
-    def OnFamilyFound(self, familyInUse, overwriteParameterValues):
-        overwriteParameterValues.Value = True
-        return True
-
-    def OnSharedFamilyFound(self, sharedFamily, familyInUse, source, overwriteParameterValues):
-        overwriteParameterValues.Value = True
-        return True
-
-
 def fparam(fm, nombres, solo_longitud=False):
     for n in nombres:
         p = fm.get_Parameter(n)
@@ -497,12 +481,12 @@ def preparar_familia(base, nuevo_nombre, codigo, defs):
     t.Commit()
     if nuevos:
         log("  Parametros particulares agregados: " + ", ".join(nuevos))
-    if not fdoc.Title.startswith(nuevo_nombre):
-        ruta = os.path.join(tempfile.gettempdir(), nuevo_nombre + ".rfa")
+    if True:
+        ruta = os.path.join(System.IO.Path.GetTempPath(), nuevo_nombre + ".rfa")
         op = SaveAsOptions()
         op.OverwriteExistingFile = True
         fdoc.SaveAs(ruta, op)
-    fam = fdoc.LoadFamily(doc, OpcionesCarga())
+    fam = fdoc.LoadFamily(doc)
     fdoc.Close(False)
     return familia_por_nombre(BIC[codigo], nuevo_nombre) or fam
 
@@ -584,9 +568,12 @@ def main():
     for codigo in ("ZAP", "COL", "VCI", "COR"):
         nombre = FAMILIAS[codigo]["nombre"]
         bic = BIC[codigo]
-        base = familia_por_nombre(bic, nombre)
-        if base is None:
-            base = buscar_familia(bic, FAMILIAS[codigo]["claves"])
+        ya = familia_por_nombre(bic, nombre)
+        if ya is not None:
+            log(" " + codigo + ": " + nombre + " ya existe (ejecucion anterior), se reutiliza")
+            fams[codigo] = ya
+            continue
+        base = buscar_familia(bic, FAMILIAS[codigo]["claves"])
         if base is None:
             base = cargar_de_biblioteca(bic, FAMILIAS[codigo]["claves"])
         if base is None and codigo == "COR":
@@ -762,7 +749,10 @@ def main():
         sd.IsItemized = True
     t.Commit()
     app.SharedParametersFilename = anterior
-    uidoc.ActiveView = vs
+    try:
+        uidoc.ActiveView = vs
+    except Exception:
+        log("  (Abra el Schedule desde el Navegador de proyectos > Tablas de planificacion)")
     log("LISTO. Revise el Schedule '" + NOMBRE_SCHEDULE + "' y la hoja QA_QC de la matriz.")
 
 
@@ -772,8 +762,11 @@ except Exception as ex:
     import traceback
     log("ERROR: " + str(ex))
     print(traceback.format_exc())
+    LOG.append(traceback.format_exc())
     try:
         from Autodesk.Revit.UI import TaskDialog
         TaskDialog.Show("ACT03", "Error: " + str(ex))
     except Exception:
         pass
+
+OUT = "\n".join(LOG)

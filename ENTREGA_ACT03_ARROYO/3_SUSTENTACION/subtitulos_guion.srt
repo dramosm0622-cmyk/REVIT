@@ -1,31 +1,55 @@
 1
-00:00:00,000 --> 00:00:16,200
+00:00:00,000 --> 00:00:16,500
 Buenos días. Soy Luis David Arroyo Anaya, estudiante de la Maestría en Patología de la Construcción de la Universidad Santo Tomás. Presento la Actividad 3 de BIM Parametrización, aplicada a la Casa Campestre P-892022, en Turbaco, Bolívar.
 
 2
-00:00:16,500 --> 00:00:42,700
+00:00:16,500 --> 00:00:43,000
 El paciente es una vivienda de dos niveles en ladera, con pórticos de concreto y cubierta en perfilería PHR. Trabajé cuatro objetos que forman la cadena de carga: la correa recibe la cubierta, la columna baja la carga, la viga de cimentación amarra las zapatas y la zapata la entrega al suelo. Cada objeto tiene su propio color en el modelo.
 
 3
-00:00:43,000 --> 00:01:06,200
+00:00:43,000 --> 00:01:06,500
 La estrategia común se basa en cinco parámetros compartidos con el prefijo PAC: código, material, resistencia, nivel y clasificación IFC. Al ser compartidos y vinculados al proyecto, tienen el mismo identificador en todos los objetos. El código y el nivel son de instancia, porque cambian pieza a pieza; los demás son de tipo.
 
 4
-00:01:06,500 --> 00:01:25,700
+00:01:06,500 --> 00:01:26,000
 Además, cada objeto tiene máximo tres parámetros particulares, guardados dentro de su propia familia. Así la viga de cimentación y la correa, que están en la misma categoría, no mezclan su información. La norma NSR-10 quedó una sola vez, en la información del proyecto.
 
 5
-00:01:26,000 --> 00:01:49,200
+00:01:26,000 --> 00:01:49,500
 La relación paramétrica está en la zapata: el volumen de concreto es igual al lado, por el lado, por el espesor. El lado también controla la geometría. Si cambio el lado de la zapata Z-T1 de 1,30 a 1,50 metros, la zapata crece y su volumen pasa de 0,59 a 0,79 metros cúbicos.
 
 6
-00:01:49,500 --> 00:02:03,700
+00:01:49,500 --> 00:02:04,000
 En Revit, los parámetros comunes aparecen en los parámetros del proyecto, y los particulares en las propiedades de cada elemento, como la altura libre de las columnas, que es de instancia.
 
 7
-00:02:04,000 --> 00:02:22,200
-La validación se hace con un solo Schedule multicategoría. Allí se comprueba que los cinco parámetros comunes están llenos en todos los elementos, y los conteos coinciden con la matriz: diecinueve zapatas, diecinueve columnas y 13,7 metros cúbicos de concreto en zapatas.
+00:02:07,299 --> 00:02:14,500
+En el modelo, cada objeto tiene su propio color y su material estructural.
 
 8
-00:02:22,500 --> 00:02:34,700
+00:02:14,599 --> 00:02:20,500
+Estas son las propiedades de tipo de la correa: aparecen sus parámetros particulares y los comunes.
+
+9
+00:02:20,599 --> 00:02:32,500
+Aquí están las zapatas Z-T1, Z-T2 y Z-T3; la familia calcula su volumen con la fórmula.
+
+10
+00:02:32,599 --> 00:02:38,500
+Este es el modelo completo: zapatas, columnas, vigas de cimentación, vigas aéreas, losa y correas.
+
+11
+00:02:38,599 --> 00:03:02,500
+En las tablas de planificación se valida que los parámetros estén llenos y que las cantidades coincidan con la matriz.
+
+12
+00:03:02,599 --> 00:03:22,099
+Así queda el modelo final del paciente.
+
+13
+00:03:22,300 --> 00:03:40,800
+La validación se hace con un solo Schedule multicategoría. Allí se comprueba que los cinco parámetros comunes están llenos en todos los elementos, y los conteos coinciden con la matriz: diecinueve zapatas, diecinueve columnas y 13,7 metros cúbicos de concreto en zapatas.
+
+14
+00:03:40,800 --> 00:03:53,300
 En conclusión, una sola matriz, un solo archivo de parámetros compartidos y un solo Schedule permiten que la información del paciente sea consistente y sin duplicados. Muchas gracias.

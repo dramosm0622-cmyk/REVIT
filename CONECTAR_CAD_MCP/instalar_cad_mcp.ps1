@@ -21,6 +21,17 @@ $hit = Get-ChildItem -Path $root -Filter 'server.py' -Recurse -Depth 3 -ErrorAct
        Where-Object { $_.Directory.Name -eq 'src' -and (Test-Path (Join-Path $_.Directory.Parent.FullName 'pyproject.toml')) } |
        Select-Object -First 1
 if (-not $hit) {
+    # tambien busca en Descargas, Escritorio, Documentos y C:\
+    $lugares = @("$env:USERPROFILE\Downloads", "$env:USERPROFILE\Desktop", "$env:USERPROFILE\OneDrive\Escritorio", "$env:USERPROFILE\OneDrive\Desktop", "$env:USERPROFILE\Documents", 'C:\')
+    foreach ($l in $lugares) {
+        if (-not (Test-Path $l)) { continue }
+        $hit = Get-ChildItem -Path $l -Filter 'server.py' -Recurse -Depth 3 -ErrorAction SilentlyContinue |
+               Where-Object { $_.Directory.Name -eq 'src' -and (Test-Path (Join-Path $_.Directory.Parent.FullName 'pyproject.toml')) -and (Select-String -Path $_.FullName -Pattern 'FastMCP' -Quiet) } |
+               Select-Object -First 1
+        if ($hit) { break }
+    }
+}
+if (-not $hit) {
     Mal "No se encontro src\server.py. Copie INSTALAR.bat e instalar_cad_mcp.ps1 dentro de la carpeta CAD-MCP-main (la que tiene la carpeta src)."
 }
 $root = $hit.Directory.Parent.FullName

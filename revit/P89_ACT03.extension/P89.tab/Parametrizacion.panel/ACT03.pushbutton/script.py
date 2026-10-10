@@ -12,7 +12,9 @@ Hace en el proyecto Revit abierto, en un solo paso:
      y amarra Anchura = Longitud = ZAP_Lado_B, Espesor = ZAP_Espesor_h.
   4. Crea niveles, ejes 1-8 / A-G, tipos y elementos tomados de la Planta de
      Cimentaciones del plano P89-2022 (19 zapatas, 19 columnas, vigas VC, correas).
-  5. Crea el Schedule multicategoria P89_ACT03_VALIDACION y lo abre.
+  5. Agrega vigas aereas VG (N+3,05 y N+6,05), losa maciza de entrepiso y correas
+     de cubierta; colores por objeto, unidades en metros y nombres en espanol.
+  6. Crea el Schedule multicategoria P89_ACT03_VALIDACION y la vista 3D a color.
 
 Uso: Dynamo (abrir ACT03_PARAMETRIZACION.dyn y Ejecutar), pyRevit o RevitPythonShell.
 Revit 2023 o superior. Abrir un proyecto NUEVO con la plantilla ESTRUCTURAL metrica.
@@ -33,7 +35,11 @@ from Autodesk.Revit.DB import (
     FamilySymbol, FilteredElementCollector, GroupTypeId,
     InstanceBinding, Level, Line, Grid, Material, SaveAsOptions, ScheduleFieldType,
     ScheduleSortGroupField, ScheduleFilter, ScheduleFilterType, StorageType,
-    Transaction, TypeBinding, UnitTypeId, UnitUtils, ViewSchedule, XYZ)
+    Transaction, TypeBinding, UnitTypeId, UnitUtils, ViewSchedule, XYZ,
+    SpecTypeId, FormatOptions, Color, View3D, ViewFamilyType, ViewFamily, DisplayStyle,
+    ViewDetailLevel, ViewPlan, FloorType, Floor, CurveLoop, CompoundStructure,
+    MaterialFunctionAssignment, FamilyInstance)
+from System.Collections.Generic import List
 from Autodesk.Revit.DB.Structure import StructuralType, StructuralInstanceUsage
 
 try:
@@ -60,6 +66,9 @@ NORMA = 'NSR-10 Titulos B y C'
 NIVELES = [('N+0,00', 0.0), ('N+3,05', 3.05), ('N+6,05', 6.05)]
 TOPE_ZAPATA = -0.65  # desplante 1,00 m - h 0,35 m (cara superior de la zapata)
 PERALTE_VIGA = 0.30
+ALTO_CORREA = 0.16  # la correa se apoya sobre la viga (su cara superior queda 0,16 m sobre el nivel)
+NOMBRE_3D = '3D P89 ACT03 - Colores por objeto'
+AUTOR = 'Luis David Arroyo Anaya - Maestria en Patologia de la Construccion, Facultad de Ingenieria Civil, Universidad Santo Tomas'
 NOMBRES_DESFASE = ['Height Offset From Level', 'Desfase de altura desde nivel', 'Desfase']
 PARAMS = [{'cp': 'Comun',
   'formula': '',
@@ -178,9 +187,14 @@ FAMILIAS = {'COL': {'ayuda': 'pilar de hormigon rectangular (M_Pilar de hormigon
                     'Concreto',
                     'Concrete'],
          'nombre': 'P89_COL_Columna_Concreto'},
- 'COR': {'ayuda': 'perfil C laminado en frio (opcional; si no hay se usa la viga rectangular)',
-         'claves': ['Cold Formed-C', 'CFS-C', 'LGS-C', 'Perfil C', 'C-Channel', 'Canal'],
-         'nombre': 'P89_COR_Perfil_C_PHR'},
+ 'COR': {'ayuda': 'viga de hormigon rectangular (se usa como base de la correa 60x160 mm)',
+         'claves': ['Concrete-Rectangular Beam',
+                    'Viga de hormig',
+                    'Rectangular Beam',
+                    'Hormig',
+                    'Concreto',
+                    'Concrete'],
+         'nombre': 'P89_COR_Correa_PHR'},
  'VCI': {'ayuda': 'viga de hormigon rectangular (M_Viga de hormigon-Rectangular / M_Concrete-Rectangular '
                   'Beam)',
          'claves': ['Concrete-Rectangular Beam',
@@ -190,6 +204,15 @@ FAMILIAS = {'COL': {'ayuda': 'pilar de hormigon rectangular (M_Pilar de hormigon
                     'Concreto',
                     'Concrete'],
          'nombre': 'P89_VCI_Viga_Cimentacion'},
+ 'VIG': {'ayuda': 'viga de hormigon rectangular (M_Viga de hormigon-Rectangular / M_Concrete-Rectangular '
+                  'Beam)',
+         'claves': ['Concrete-Rectangular Beam',
+                    'Viga de hormig',
+                    'Rectangular Beam',
+                    'Hormig',
+                    'Concreto',
+                    'Concrete'],
+         'nombre': 'P89_VIG_Viga_Aerea'},
  'ZAP': {'ayuda': 'cimentacion aislada rectangular (M_Zapata-Rectangular / M_Footing-Rectangular)',
          'claves': ['Footing-Rectangular', 'Zapata-Rectangular', 'Zapata rectangular', 'Zapata', 'Footing'],
          'nombre': 'P89_ZAP_Zapata_Aislada'}}
@@ -206,7 +229,8 @@ AMARRES = {'ZAP': [(['Width', 'Anchura', 'Ancho'], 'ZAP_Lado_B'),
 CLASIFICACION = [('ZAP', 'IfcFooting.PAD_FOOTING | EF_20_10'),
  ('COL', 'IfcColumn.COLUMN | EF_25_10'),
  ('VCI', 'IfcBeam.BEAM | EF_20_10'),
- ('COR', 'IfcMember.PURLIN | EF_30_10')]
+ ('COR', 'IfcMember.PURLIN | EF_30_10'),
+ ('VIG', 'IfcBeam.BEAM | EF_20_10')]
 TIPOS = [['ZAP', 'Z-T1', 1.3, 0.35, "Concreto reforzado f'c 21 MPa", 21, 'VERIFICAR en despiece P-892022'],
  ['ZAP', 'Z-T2', 1.6, 0.35, "Concreto reforzado f'c 21 MPa", 21, 'VERIFICAR en despiece P-892022'],
  ['ZAP', 'Z-T3', 1.7, 0.35, "Concreto reforzado f'c 21 MPa", 21, 'VERIFICAR en despiece P-892022'],
@@ -214,7 +238,375 @@ TIPOS = [['ZAP', 'Z-T1', 1.3, 0.35, "Concreto reforzado f'c 21 MPa", 21, 'VERIFI
  ['COL', 'C-25x40', 0.25, 0.4, "Concreto reforzado f'c 21 MPa", 21, 'VERIFICAR en despiece P-892022'],
  ['COL', 'C-40x25', 0.4, 0.25, "Concreto reforzado f'c 21 MPa", 21, 'VERIFICAR en despiece P-892022'],
  ['VCI', 'VC-TIPO', 0.3, 0.3, "Concreto reforzado f'c 21 MPa", 21, 'VERIFICAR en despiece P-892022'],
- ['COR', 'PHR C 160x60x20', 0.06, 0.16, 'Acero laminado en frio PHR', 340, 'e = 1,50 mm']]
+ ['COR', 'PHR C 160x60x20', 0.06, 0.16, 'Acero laminado en frio PHR', 340, 'e = 1,50 mm'],
+ ['VIG', 'VG-30x50', 0.3, 0.5, "Concreto reforzado f'c 21 MPa", 21, 'VERIFICAR en despiece P-892022'],
+ ['VIG', 'VG-20x50', 0.2, 0.5, "Concreto reforzado f'c 21 MPa", 21, 'VERIFICAR en despiece P-892022'],
+ ['VIG', 'VG-12x50', 0.12, 0.5, "Concreto reforzado f'c 21 MPa", 21, 'VERIFICAR en despiece P-892022']]
+VIGAS_AEREAS = [{'cod': 'VIG-VG30X50-N305-01',
+  'nivel': 'N+3,05',
+  'tipo': 'VG-30x50',
+  'x1': 7.5,
+  'x2': 15.56,
+  'y1': 0.0,
+  'y2': 0.0},
+ {'cod': 'VIG-VG30X50-N305-02',
+  'nivel': 'N+3,05',
+  'tipo': 'VG-30x50',
+  'x1': 0.0,
+  'x2': 5.51,
+  'y1': 0.38,
+  'y2': 0.38},
+ {'cod': 'VIG-VG12X50-N305-03',
+  'nivel': 'N+3,05',
+  'tipo': 'VG-12x50',
+  'x1': 0.0,
+  'x2': 5.51,
+  'y1': 0.589,
+  'y2': 0.589},
+ {'cod': 'VIG-VG30X50-N305-04',
+  'nivel': 'N+3,05',
+  'tipo': 'VG-30x50',
+  'x1': 0.0,
+  'x2': 2.0,
+  'y1': 2.48,
+  'y2': 2.48},
+ {'cod': 'VIG-VG20X50-N305-05',
+  'nivel': 'N+3,05',
+  'tipo': 'VG-20x50',
+  'x1': 6.162,
+  'x2': 9.452,
+  'y1': 2.48,
+  'y2': 2.48},
+ {'cod': 'VIG-VG30X50-N305-06',
+  'nivel': 'N+3,05',
+  'tipo': 'VG-30x50',
+  'x1': 7.5,
+  'x2': 15.56,
+  'y1': 3.98,
+  'y2': 3.98},
+ {'cod': 'VIG-VG12X50-N305-07',
+  'nivel': 'N+3,05',
+  'tipo': 'VG-12x50',
+  'x1': 0.152,
+  'x2': 3.812,
+  'y1': 5.87,
+  'y2': 5.87},
+ {'cod': 'VIG-VG30X50-N305-08',
+  'nivel': 'N+3,05',
+  'tipo': 'VG-30x50',
+  'x1': 0.0,
+  'x2': 15.56,
+  'y1': 6.86,
+  'y2': 6.86},
+ {'cod': 'VIG-VG12X50-N305-09',
+  'nivel': 'N+3,05',
+  'tipo': 'VG-12x50',
+  'x1': 7.652,
+  'x2': 11.452,
+  'y1': 8.3,
+  'y2': 8.3},
+ {'cod': 'VIG-VG20X50-N305-10',
+  'nivel': 'N+3,05',
+  'tipo': 'VG-20x50',
+  'x1': -0.003,
+  'x2': 3.812,
+  'y1': 9.02,
+  'y2': 9.02},
+ {'cod': 'VIG-VG30X50-N305-11',
+  'nivel': 'N+3,05',
+  'tipo': 'VG-30x50',
+  'x1': -0.003,
+  'x2': 5.452,
+  'y1': 11.18,
+  'y2': 11.18},
+ {'cod': 'VIG-VG30X50-N305-12',
+  'nivel': 'N+3,05',
+  'tipo': 'VG-30x50',
+  'x1': 11.6,
+  'x2': 15.56,
+  'y1': 11.88,
+  'y2': 11.88},
+ {'cod': 'VIG-VG12X50-N305-13',
+  'nivel': 'N+3,05',
+  'tipo': 'VG-12x50',
+  'x1': 2.062,
+  'x2': 5.452,
+  'y1': 12.2,
+  'y2': 12.2},
+ {'cod': 'VIG-VG12X50-N305-14',
+  'nivel': 'N+3,05',
+  'tipo': 'VG-12x50',
+  'x1': -0.063,
+  'x2': -0.063,
+  'y1': 6.86,
+  'y2': 11.03},
+ {'cod': 'VIG-VG30X50-N305-15',
+  'nivel': 'N+3,05',
+  'tipo': 'VG-30x50',
+  'x1': 0.002,
+  'x2': 0.002,
+  'y1': 0.38,
+  'y2': 6.86},
+ {'cod': 'VIG-VG30X50-N305-16',
+  'nivel': 'N+3,05',
+  'tipo': 'VG-30x50',
+  'x1': 2.002,
+  'x2': 2.002,
+  'y1': 0.53,
+  'y2': 2.48},
+ {'cod': 'VIG-VG12X50-N305-17',
+  'nivel': 'N+3,05',
+  'tipo': 'VG-12x50',
+  'x1': 2.002,
+  'x2': 2.002,
+  'y1': 5.93,
+  'y2': 12.14},
+ {'cod': 'VIG-VG30X50-N305-18',
+  'nivel': 'N+3,05',
+  'tipo': 'VG-30x50',
+  'x1': 3.072,
+  'x2': 3.072,
+  'y1': 6.86,
+  'y2': 11.18},
+ {'cod': 'VIG-VG12X50-N305-19',
+  'nivel': 'N+3,05',
+  'tipo': 'VG-12x50',
+  'x1': 3.872,
+  'x2': 3.872,
+  'y1': 5.93,
+  'y2': 11.03},
+ {'cod': 'VIG-VG12X50-N305-20',
+  'nivel': 'N+3,05',
+  'tipo': 'VG-12x50',
+  'x1': 5.512,
+  'x2': 5.512,
+  'y1': 11.33,
+  'y2': 12.14},
+ {'cod': 'VIG-VG12X50-N305-21',
+  'nivel': 'N+3,05',
+  'tipo': 'VG-12x50',
+  'x1': 6.102,
+  'x2': 6.102,
+  'y1': 0.432,
+  'y2': 2.38},
+ {'cod': 'VIG-VG12X50-N305-22',
+  'nivel': 'N+3,05',
+  'tipo': 'VG-12x50',
+  'x1': 6.102,
+  'x2': 6.102,
+  'y1': 7.01,
+  'y2': 10.508},
+ {'cod': 'VIG-VG30X50-N305-23',
+  'nivel': 'N+3,05',
+  'tipo': 'VG-30x50',
+  'x1': 7.502,
+  'x2': 7.502,
+  'y1': 0.0,
+  'y2': 6.86},
+ {'cod': 'VIG-VG20X50-N305-24',
+  'nivel': 'N+3,05',
+  'tipo': 'VG-20x50',
+  'x1': 9.552,
+  'x2': 9.552,
+  'y1': 0.15,
+  'y2': 6.71},
+ {'cod': 'VIG-VG30X50-N305-25',
+  'nivel': 'N+3,05',
+  'tipo': 'VG-30x50',
+  'x1': 11.602,
+  'x2': 11.602,
+  'y1': 0.0,
+  'y2': 11.88},
+ {'cod': 'VIG-VG12X50-N305-26',
+  'nivel': 'N+3,05',
+  'tipo': 'VG-12x50',
+  'x1': 14.222,
+  'x2': 14.222,
+  'y1': 4.13,
+  'y2': 6.71},
+ {'cod': 'VIG-VG30X50-N305-27',
+  'nivel': 'N+3,05',
+  'tipo': 'VG-30x50',
+  'x1': 15.562,
+  'x2': 15.562,
+  'y1': 0.0,
+  'y2': 11.88},
+ {'cod': 'VIG-VG12X50-N605-01',
+  'nivel': 'N+6,05',
+  'tipo': 'VG-12x50',
+  'x1': 7.652,
+  'x2': 11.452,
+  'y1': 0.79,
+  'y2': 0.79},
+ {'cod': 'VIG-VG30X50-N605-02',
+  'nivel': 'N+6,05',
+  'tipo': 'VG-30x50',
+  'x1': 7.5,
+  'x2': 11.6,
+  'y1': 3.98,
+  'y2': 3.98},
+ {'cod': 'VIG-VG12X50-N605-03',
+  'nivel': 'N+6,05',
+  'tipo': 'VG-12x50',
+  'x1': 0.152,
+  'x2': 3.812,
+  'y1': 5.87,
+  'y2': 5.87},
+ {'cod': 'VIG-VG30X50-N605-04',
+  'nivel': 'N+6,05',
+  'tipo': 'VG-30x50',
+  'x1': 0.0,
+  'x2': 3.812,
+  'y1': 6.86,
+  'y2': 6.86},
+ {'cod': 'VIG-VG30X50-N605-05',
+  'nivel': 'N+6,05',
+  'tipo': 'VG-30x50',
+  'x1': 7.5,
+  'x2': 11.6,
+  'y1': 6.86,
+  'y2': 6.86},
+ {'cod': 'VIG-VG12X50-N605-06',
+  'nivel': 'N+6,05',
+  'tipo': 'VG-12x50',
+  'x1': 7.652,
+  'x2': 11.452,
+  'y1': 8.3,
+  'y2': 8.3},
+ {'cod': 'VIG-VG20X50-N605-07',
+  'nivel': 'N+6,05',
+  'tipo': 'VG-20x50',
+  'x1': -0.003,
+  'x2': 3.812,
+  'y1': 9.02,
+  'y2': 9.02},
+ {'cod': 'VIG-VG30X50-N605-08',
+  'nivel': 'N+6,05',
+  'tipo': 'VG-30x50',
+  'x1': -0.003,
+  'x2': 5.452,
+  'y1': 11.18,
+  'y2': 11.18},
+ {'cod': 'VIG-VG12X50-N605-09',
+  'nivel': 'N+6,05',
+  'tipo': 'VG-12x50',
+  'x1': 2.062,
+  'x2': 5.452,
+  'y1': 12.2,
+  'y2': 12.2},
+ {'cod': 'VIG-VG12X50-N605-10',
+  'nivel': 'N+6,05',
+  'tipo': 'VG-12x50',
+  'x1': -0.063,
+  'x2': -0.063,
+  'y1': 6.86,
+  'y2': 11.03},
+ {'cod': 'VIG-VG30X50-N605-11',
+  'nivel': 'N+6,05',
+  'tipo': 'VG-30x50',
+  'x1': 0.002,
+  'x2': 0.002,
+  'y1': 5.93,
+  'y2': 6.86},
+ {'cod': 'VIG-VG12X50-N605-12',
+  'nivel': 'N+6,05',
+  'tipo': 'VG-12x50',
+  'x1': 2.002,
+  'x2': 2.002,
+  'y1': 5.93,
+  'y2': 12.14},
+ {'cod': 'VIG-VG30X50-N605-13',
+  'nivel': 'N+6,05',
+  'tipo': 'VG-30x50',
+  'x1': 3.072,
+  'x2': 3.072,
+  'y1': 5.93,
+  'y2': 12.14},
+ {'cod': 'VIG-VG12X50-N605-14',
+  'nivel': 'N+6,05',
+  'tipo': 'VG-12x50',
+  'x1': 3.872,
+  'x2': 3.872,
+  'y1': 5.93,
+  'y2': 11.03},
+ {'cod': 'VIG-VG12X50-N605-15',
+  'nivel': 'N+6,05',
+  'tipo': 'VG-12x50',
+  'x1': 5.512,
+  'x2': 5.512,
+  'y1': 11.33,
+  'y2': 12.14},
+ {'cod': 'VIG-VG30X50-N605-16',
+  'nivel': 'N+6,05',
+  'tipo': 'VG-30x50',
+  'x1': 7.502,
+  'x2': 7.502,
+  'y1': 0.85,
+  'y2': 8.24},
+ {'cod': 'VIG-VG20X50-N605-17',
+  'nivel': 'N+6,05',
+  'tipo': 'VG-20x50',
+  'x1': 9.552,
+  'x2': 9.552,
+  'y1': 0.85,
+  'y2': 8.24},
+ {'cod': 'VIG-VG30X50-N605-18',
+  'nivel': 'N+6,05',
+  'tipo': 'VG-30x50',
+  'x1': 11.602,
+  'x2': 11.602,
+  'y1': 0.85,
+  'y2': 8.24}]
+LOSA = {'clasificacion': 'IfcSlab.FLOOR | EF_30_20',
+ 'espesor': 0.15,
+ 'poligonos': [[(-0.12, 5.81),
+                (3.93, 5.81),
+                (3.93, 11.03),
+                (5.57, 11.03),
+                (5.57, 12.26),
+                (1.94, 12.26),
+                (1.94, 11.33),
+                (-0.12, 11.33)],
+               [(7.35, 0.73), (11.75, 0.73), (11.75, 8.36), (7.35, 8.36)]],
+ 'tipo': 'Losa maciza P89 e=0,15 m'}
+MATERIALES = {'COL': ('P89 Concreto - Columnas', (31, 119, 180), 0),
+ 'COR': ('P89 Acero - Correas PHR', (214, 39, 40), 0),
+ 'LOS': ('P89 Concreto - Losa de entrepiso', (240, 200, 80), 40),
+ 'VCI': ('P89 Concreto - Vigas de cimentacion', (44, 160, 44), 0),
+ 'VIG': ('P89 Concreto - Vigas aereas', (255, 127, 14), 0),
+ 'ZAP': ('P89 Concreto - Zapatas', (140, 140, 140), 0)}
+PROYECTO = [('Name', 'Casa Campestre - Vivienda unifamiliar Cañaveral'),
+ ('Number', 'P-892022'),
+ ('Address', 'Sector Cañaveral, Turbaco (Bolívar)'),
+ ('Author', 'Luis David Arroyo Anaya'),
+ ('OrganizationName', 'Universidad Santo Tomás - Facultad de Ingeniería Civil'),
+ ('OrganizationDescription', 'Maestría en Patología de la Construcción'),
+ ('BuildingName', 'Actividad 3 - BIM Parametrizacion')]
+DESCRIPCIONES = {'COL': 'Columna de concreto reforzado',
+ 'COR': 'Correa de cubierta PHR C 160x60x20',
+ 'VCI': 'Viga de cimentacion (amarre entre zapatas)',
+ 'VIG': 'Viga aerea de concreto reforzado',
+ 'ZAP': 'Zapata aislada de concreto reforzado'}
+ENCABEZADOS = {'#': 'Cantidad',
+ 'COL_Altura_Libre': 'COL Altura libre (m)',
+ 'COL_Refuerzo_Longitudinal': 'COL Refuerzo',
+ 'COL_Seccion_bxh': 'COL Sección b x h',
+ 'COR_Designacion_Perfil': 'COR Perfil',
+ 'COR_Espesor_Lamina': 'COR Espesor lámina',
+ 'COR_Separacion': 'COR Separación (m)',
+ 'Categoria': 'Categoría',
+ 'Familia y tipo': 'Familia y tipo',
+ 'PAC_Clasificacion_IFC_Uniclass': 'PAC Clasificación IFC | Uniclass',
+ 'PAC_Codigo_Elemento': 'PAC Código',
+ 'PAC_Material_Estructural': 'PAC Material',
+ 'PAC_Nivel_Referencia': 'PAC Nivel',
+ 'PAC_Resistencia_MPa': 'PAC Resistencia (MPa)',
+ 'VCI_Eje_Estructural': 'VCI Eje',
+ 'VCI_Refuerzo': 'VCI Refuerzo',
+ 'VCI_Seccion_bxh': 'VCI Sección b x h',
+ 'ZAP_Espesor_h': 'ZAP Espesor h (m)',
+ 'ZAP_Lado_B': 'ZAP Lado B (m)',
+ 'ZAP_Volumen_Concreto': 'ZAP Volumen (m³) = B·B·h'}
 EJES_X = [('1', 0.0), ('2', 2.001), ('3', 3.07), ('4', 5.511), ('5', 6.1), ('6', 7.5), ('7', 11.6), ('8', 15.56)]
 EJES_Y = [('A', 0.0), ('B', 0.38), ('C', 2.48), ('D', 3.98), ('E', 6.86), ('F', 11.18), ('G', 11.88)]
 # Planta de cimentaciones P89-2022: origen = interseccion ejes 1-A, metros
@@ -261,11 +653,13 @@ VIGAS = [{'cod': 'VCI-VC-1-B/C', 'eje': '1', 'x1': 0.0, 'x2': 0.0, 'y1': 0.38, '
  {'cod': 'VCI-VC-F-3/5', 'eje': 'F', 'x1': 3.07, 'x2': 6.1, 'y1': 11.18, 'y2': 11.18},
  {'cod': 'VCI-VC-G-7/8', 'eje': 'G', 'x1': 11.6, 'x2': 15.56, 'y1': 11.88, 'y2': 11.88}]
 # Trazado aproximado (zona ejes 7-8 de la planta N+3,05; separacion ~1,00 m segun etiquetas PHR del plano). Ajustar si se requiere.
-CORREAS = {'nivel': 'N+3,05',
- 'separacion': 1.0,
- 'x1': 11.6,
- 'x2': 15.56,
- 'y': [0.5, 1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5, 9.5, 10.5, 11.5]}
+CORREAS = [{'nivel': 'N+3,05',
+  'separacion': 1.0,
+  'x1': 11.6,
+  'x2': 15.56,
+  'y': [0.5, 1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5, 9.5, 10.5, 11.5]},
+ {'nivel': 'N+6,05', 'separacion': 1.0, 'x1': 7.5, 'x2': 11.6, 'y': [1.3, 2.3, 3.3, 4.3, 5.3, 6.3, 7.3]},
+ {'nivel': 'N+6,05', 'separacion': 1.0, 'x1': 0.0, 'x2': 3.07, 'y': [6.4, 7.4, 8.4, 9.4, 10.4]}]
 CAMPOS_SCHEDULE = ['Categoria',
  'Familia y tipo',
  'PAC_Codigo_Elemento',
@@ -316,6 +710,7 @@ BIC = {
     "COL": BuiltInCategory.OST_StructuralColumns,
     "VCI": BuiltInCategory.OST_StructuralFraming,
     "COR": BuiltInCategory.OST_StructuralFraming,
+    "VIG": BuiltInCategory.OST_StructuralFraming,
 }
 
 
@@ -523,7 +918,7 @@ def tipo(fam, nombre):
 
 def codigos_existentes():
     cods = set()
-    for bic in set(BIC.values()):
+    for bic in list(set(BIC.values())) + [BuiltInCategory.OST_Floors]:
         for e in FilteredElementCollector(doc).OfCategory(bic).WhereElementIsNotElementType():
             p = e.LookupParameter("PAC_Codigo_Elemento")
             if p is not None and p.AsString():
@@ -532,6 +927,53 @@ def codigos_existentes():
 
 
 # ------------------------------------------------------------------- proceso
+def unidades_metricas():
+    u = doc.GetUnits()
+    for spec, unit, acc in ((SpecTypeId.Length, UnitTypeId.Meters, 0.01),
+                            (SpecTypeId.Area, UnitTypeId.SquareMeters, 0.01),
+                            (SpecTypeId.Volume, UnitTypeId.CubicMeters, 0.001)):
+        fo = FormatOptions(unit)
+        fo.Accuracy = acc
+        u.SetFormatOptions(spec, fo)
+    doc.SetUnits(u)
+
+
+def material_color(codigo):
+    nombre, rgb, transp = MATERIALES[codigo]
+    mid = None
+    for mt in FilteredElementCollector(doc).OfClass(Material):
+        if mt.Name == nombre:
+            mid = mt.Id
+    if mid is None:
+        mid = Material.Create(doc, nombre)
+    mt = doc.GetElement(mid)
+    mt.Color = Color(System.Byte(rgb[0]), System.Byte(rgb[1]), System.Byte(rgb[2]))
+    mt.Transparency = transp
+    try:
+        mt.UseRenderAppearanceForShading = False
+    except Exception:
+        pass
+    try:
+        mt.MaterialClass = "Acero" if codigo == "COR" else "Concreto"
+    except Exception:
+        pass
+    return mid
+
+
+def poner_material(s, mid):
+    p = s.get_Parameter(BuiltInParameter.STRUCTURAL_MATERIAL_PARAM)
+    if p is not None and not p.IsReadOnly:
+        p.Set(mid)
+        return
+    p = lookup(s, ["Material estructural", "Structural Material", "Material"])
+    if p is not None and not p.IsReadOnly and p.StorageType == StorageType.ElementId:
+        p.Set(mid)
+
+
+def linea(x1, y1, x2, y2, z=0.0):
+    return Line.CreateBound(XYZ(m(x1), m(y1), z), XYZ(m(x2), m(y2), z))
+
+
 def main():
     if doc.IsFamilyDocument:
         raise Exception("Abra un PROYECTO (.rvt), no una familia.")
@@ -539,13 +981,14 @@ def main():
     log("1) Parametros compartidos: " + path)
     defs, anterior = leer_definiciones(path)
 
-    # 2) parametros comunes -> proyecto
-    log("2) Vinculando parametros comunes al proyecto")
+    # 2) parametros comunes -> proyecto + unidades + informacion de proyecto
+    log("2) Parametros comunes, unidades en metros e informacion de proyecto")
     t = Transaction(doc, "P89 parametros comunes")
     t.Start()
+    unidades_metricas()
     cats = CategorySet()
     for bic in (BuiltInCategory.OST_StructuralFoundation, BuiltInCategory.OST_StructuralColumns,
-                BuiltInCategory.OST_StructuralFraming):
+                BuiltInCategory.OST_StructuralFraming, BuiltInCategory.OST_Floors):
         cats.Insert(doc.Settings.Categories.get_Item(bic))
     for p in PARAMS:
         if p["cp"] == "Comun":
@@ -560,27 +1003,29 @@ def main():
         if not doc.ParameterBindings.Insert(d, b, GRUPOS[p["grupo"]]):
             doc.ParameterBindings.ReInsert(d, b, GRUPOS[p["grupo"]])
         log("  " + p["nombre"] + " (" + p["ti"] + ")")
+    pi = doc.ProjectInformation
+    for attr, val in PROYECTO:
+        try:
+            setattr(pi, attr, val)
+        except Exception:
+            pass
+    set_val(pi, "PAC_Norma_Diseno", NORMA)
     t.Commit()
 
     # 3) familias del paciente
-    log("3) Familias del paciente")
+    log("3) Familias")
     fams = {}
-    for codigo in ("ZAP", "COL", "VCI", "COR"):
+    for codigo in ("ZAP", "COL", "VCI", "COR", "VIG"):
         nombre = FAMILIAS[codigo]["nombre"]
         bic = BIC[codigo]
         ya = familia_por_nombre(bic, nombre)
         if ya is not None:
-            log(" " + codigo + ": " + nombre + " ya existe (ejecucion anterior), se reutiliza")
+            log(" " + codigo + ": " + nombre + " ya existe, se reutiliza")
             fams[codigo] = ya
             continue
         base = buscar_familia(bic, FAMILIAS[codigo]["claves"])
         if base is None:
             base = cargar_de_biblioteca(bic, FAMILIAS[codigo]["claves"])
-        if base is None and codigo == "COR":
-            # sin perfil C en la biblioteca: se parte de la viga de concreto,
-            # se guarda como familia propia y se le da la seccion 0,06 x 0,16
-            base = buscar_familia(bic, FAMILIAS["VCI"]["claves"])
-            log("  AVISO: no se encontro familia de perfil C; la correa se representa con seccion rectangular 60x160 mm")
         if base is None:
             raise Exception("No se encontro una familia para " + codigo + ". Cargue una familia de "
                             + FAMILIAS[codigo]["ayuda"] + " (Insertar > Cargar familia) y vuelva a ejecutar.")
@@ -588,12 +1033,21 @@ def main():
         fams[codigo] = preparar_familia(base, nombre, codigo, defs)
 
     # 4) modelo
-    log("4) Niveles, ejes, tipos y elementos")
+    log("4) Niveles, ejes, materiales, tipos y elementos")
     t = Transaction(doc, "P89 modelo")
     t.Start()
     lv = {}
     for n, e in NIVELES:
         lv[n] = nivel(n, e)
+    for v in FilteredElementCollector(doc).OfClass(ViewPlan):
+        try:
+            if v.IsTemplate or v.GenLevel is None or not v.GenLevel.Name.startswith("N+"):
+                continue
+            pref = "Planta estructural " if "Engineering" in str(v.ViewType) else "Planta "
+            if v.Name != pref + v.GenLevel.Name:
+                v.Name = pref + v.GenLevel.Name
+        except Exception:
+            pass
     grids = set(g.Name for g in FilteredElementCollector(doc).OfClass(Grid))
     for n, x in EJES_X:
         if n not in grids:
@@ -604,8 +1058,7 @@ def main():
             g = Grid.Create(doc, Line.CreateBound(XYZ(m(-1.8), m(y), 0), XYZ(m(17.4), m(y), 0)))
             g.Name = n
 
-    conc = material(["Concreto", "Hormig", "Concrete"])
-    acero = material(["Acero", "Steel"])
+    mats = dict((k, material_color(k)) for k in MATERIALES)
     clas = dict((o, v) for o, v in CLASIFICACION)
     sym = {}
     for cod, nom, b, h, mat, fc, ref in TIPOS:
@@ -615,36 +1068,55 @@ def main():
         set_val(s, "PAC_Material_Estructural", mat)
         set_val(s, "PAC_Resistencia_MPa", fc, unidad=None)
         set_val(s, "PAC_Clasificacion_IFC_Uniclass", clas[cod])
-        mid = acero if cod == "COR" else conc
-        if mid is not None:
-            p = s.get_Parameter(BuiltInParameter.STRUCTURAL_MATERIAL_PARAM)
-            if p is not None and not p.IsReadOnly:
-                p.Set(mid)
+        poner_material(s, mats[cod])
+        try:
+            s.get_Parameter(BuiltInParameter.ALL_MODEL_DESCRIPTION).Set(DESCRIPCIONES.get(cod, ""))
+        except Exception:
+            pass
         sec = ("%.2fx%.2f" % (b, h)).replace(".", ",")
         if cod == "ZAP":
             set_val(s, "ZAP_Lado_B", b)
             set_val(s, "ZAP_Espesor_h", h)
-        elif cod == "COL":
+        else:
             set_val(s, ["b", "Anchura", "Width"], b)
-            set_val(s, ["h", "Profundidad", "Depth"], h)
+            set_val(s, ["h", "Altura", "Profundidad", "Height", "Depth"], h)
+        if cod == "COL":
             set_val(s, "COL_Seccion_bxh", sec)
             set_val(s, "COL_Refuerzo_Longitudinal", ref)
         elif cod == "VCI":
-            set_val(s, ["b", "Anchura", "Width"], b)
-            set_val(s, ["h", "Altura", "Height", "Depth"], h)
             set_val(s, "VCI_Seccion_bxh", sec)
             set_val(s, "VCI_Refuerzo", ref)
         elif cod == "COR":
-            set_val(s, ["b", "Anchura", "Width"], b)
-            set_val(s, ["h", "Altura", "Height", "Depth"], h)
             set_val(s, "COR_Designacion_Perfil", nom)
             set_val(s, "COR_Espesor_Lamina", 1.50, unidad="mm")
         sym[nom] = s
+
+    # tipo de losa
+    ft = None
+    for x in FilteredElementCollector(doc).OfClass(FloorType):
+        if x.Name == LOSA["tipo"]:
+            ft = x
+    if ft is None:
+        base_ft = [x for x in FilteredElementCollector(doc).OfClass(FloorType)
+                   if x.GetCompoundStructure() is not None and not x.IsFoundationSlab][0]
+        ft = base_ft.Duplicate(LOSA["tipo"])
+    ft.SetCompoundStructure(CompoundStructure.CreateSingleLayerCompoundStructure(
+        MaterialFunctionAssignment.Structure, m(LOSA["espesor"]), mats["LOS"]))
+    set_val(ft, "PAC_Material_Estructural", "Concreto reforzado f'c 21 MPa")
+    set_val(ft, "PAC_Resistencia_MPa", 21, unidad=None)
+    set_val(ft, "PAC_Clasificacion_IFC_Uniclass", LOSA["clasificacion"])
+    doc.Regenerate()
+
+    # la correa de la version anterior (perfil de biblioteca) se reemplaza por la nueva
+    vieja = familia_por_nombre(BuiltInCategory.OST_StructuralFraming, "P89_COR_Perfil_C_PHR")
+    if vieja is not None:
+        doc.Delete(vieja.Id)
+        log("  Se elimino la correa anterior (P89_COR_Perfil_C_PHR); se crean de nuevo con P89_COR_Correa_PHR")
     doc.Regenerate()
 
     hechos = codigos_existentes()
     n0, n3, n6 = lv[NIVELES[0][0]], lv[NIVELES[1][0]], lv[NIVELES[2][0]]
-    cont = {"ZAP": 0, "COL": 0, "VCI": 0, "COR": 0}
+    cont = {"ZAP": 0, "COL": 0, "VCI": 0, "VIG": 0, "LOS": 0, "COR": 0}
 
     def comunes(e, codigo, nivel_txt):
         set_val(e, "PAC_Codigo_Elemento", codigo)
@@ -681,35 +1153,92 @@ def main():
     for v in VIGAS:
         if v["cod"] in hechos:
             continue
-        ln = Line.CreateBound(XYZ(m(v["x1"]), m(v["y1"]), 0), XYZ(m(v["x2"]), m(v["y2"]), 0))
-        b = doc.Create.NewFamilyInstance(ln, sym["VC-TIPO"], n0, StructuralType.Beam)
+        b = doc.Create.NewFamilyInstance(linea(v["x1"], v["y1"], v["x2"], v["y2"]), sym["VC-TIPO"], n0, StructuralType.Beam)
         set_val(b, "VCI_Eje_Estructural", v["eje"])
         comunes(b, v["cod"], NIVELES[0][0])
         cont["VCI"] += 1
 
-    nivel_cor = lv[CORREAS["nivel"]]
-    for i, y in enumerate(CORREAS["y"], 1):
-        cod = "COR-PHR-%02d" % i
+    # vigas aereas VG
+    for v in VIGAS_AEREAS:
+        if v["cod"] in hechos:
+            continue
+        nv = lv[v["nivel"]]
+        b = doc.Create.NewFamilyInstance(linea(v["x1"], v["y1"], v["x2"], v["y2"], nv.Elevation),
+                                         sym[v["tipo"]], nv, StructuralType.Beam)
+        comunes(b, v["cod"], v["nivel"])
+        cont["VIG"] += 1
+
+    # losa maciza de entrepiso
+    for i, poly in enumerate(LOSA["poligonos"], 1):
+        cod = "LOS-E%02d-N305-%02d" % (int(round(LOSA["espesor"] * 100)), i)
         if cod in hechos:
             continue
-        ln = Line.CreateBound(XYZ(m(CORREAS["x1"]), m(y), nivel_cor.Elevation),
-                              XYZ(m(CORREAS["x2"]), m(y), nivel_cor.Elevation))
-        r = doc.Create.NewFamilyInstance(ln, sym["PHR C 160x60x20"], nivel_cor, StructuralType.Beam)
-        try:
-            r.StructuralUsage = StructuralInstanceUsage.Purlin
-        except Exception:
-            pass
-        set_val(r, "COR_Separacion", CORREAS["separacion"])
-        comunes(r, cod, CORREAS["nivel"])
-        cont["COR"] += 1
+        cl = CurveLoop()
+        for (x1, y1), (x2, y2) in zip(poly, poly[1:] + poly[:1]):
+            cl.Append(linea(x1, y1, x2, y2, n3.Elevation))
+        loops = List[CurveLoop]()
+        loops.Add(cl)
+        f = Floor.Create(doc, loops, ft.Id, n3.Id, True, None, 0.0)
+        comunes(f, cod, NIVELES[1][0])
+        cont["LOS"] += 1
 
-    set_val(doc.ProjectInformation, "PAC_Norma_Diseno", NORMA)
+    s_cor = sym["PHR C 160x60x20"]
+    k = 0
+    for grp in CORREAS:
+        nv = lv[grp["nivel"]]
+        z = nv.Elevation + m(ALTO_CORREA)
+        for y in grp["y"]:
+            k += 1
+            cod = "COR-PHR-%02d" % k
+            if cod in hechos:
+                continue
+            r = doc.Create.NewFamilyInstance(linea(grp["x1"], y, grp["x2"], y, z), s_cor, nv, StructuralType.Beam)
+            try:
+                r.StructuralUsage = StructuralInstanceUsage.Purlin
+            except Exception:
+                pass
+            set_val(r, "COR_Separacion", grp["separacion"])
+            comunes(r, cod, grp["nivel"])
+            cont["COR"] += 1
     t.Commit()
     log("  Elementos nuevos: " + str(cont))
 
-    # 5) schedule
-    log("5) Schedule de validacion")
-    t = Transaction(doc, "P89 schedule")
+    # 5) limpieza: tipos y familias en ingles sin uso
+    t = Transaction(doc, "P89 limpieza")
+    t.Start()
+    usados = set()
+    for e in FilteredElementCollector(doc).OfClass(FamilyInstance):
+        usados.add(e.Symbol.Id.ToString())
+        usados.add(e.Symbol.Family.Id.ToString())
+    nuestros = set(tt[1] for tt in TIPOS)
+    borrados = 0
+    for bic in (BuiltInCategory.OST_StructuralFoundation, BuiltInCategory.OST_StructuralColumns,
+                BuiltInCategory.OST_StructuralFraming):
+        fams_cat = {}
+        for s in simbolos(bic):
+            fams_cat[s.Family.Id.ToString()] = s.Family
+        for fid, fam in fams_cat.items():
+            if fam.Name.startswith("P89_"):
+                for sid in list(fam.GetFamilySymbolIds()):
+                    el = doc.GetElement(sid)
+                    if el.Name not in nuestros and sid.ToString() not in usados:
+                        try:
+                            doc.Delete(sid)
+                            borrados += 1
+                        except Exception:
+                            pass
+            elif fid not in usados:
+                try:
+                    doc.Delete(fam.Id)
+                    borrados += 1
+                except Exception:
+                    pass
+    t.Commit()
+    log("  Tipos/familias sin uso eliminados: " + str(borrados))
+
+    # 6) schedule y vista 3D
+    log("6) Schedule y vista 3D")
+    t = Transaction(doc, "P89 schedule y 3D")
     t.Start()
     vs = None
     for v in FilteredElementCollector(doc).OfClass(ViewSchedule):
@@ -718,42 +1247,67 @@ def main():
     if vs is None:
         vs = ViewSchedule.CreateSchedule(doc, ElementId.InvalidElementId)
         vs.Name = NOMBRE_SCHEDULE
-        sd = vs.Definition
-        disp = list(sd.GetSchedulableFields())
-        ids = {}
-        for sf in disp:
-            if sf.FieldType == ScheduleFieldType.Count:
-                ids["#"] = sf
-                continue
-            pid = sf.ParameterId
-            if pid == ElementId(BuiltInParameter.ELEM_CATEGORY_PARAM):
-                ids["Categoria"] = sf
-            elif pid == ElementId(BuiltInParameter.ELEM_FAMILY_AND_TYPE_PARAM):
-                ids["Familia y tipo"] = sf
-            else:
-                ids.setdefault(sf.GetName(doc), sf)
-        agregados = {}
-        for nombre in CAMPOS_SCHEDULE:
-            if nombre in ids:
-                agregados[nombre] = sd.AddField(ids[nombre])
-            else:
-                log("  AVISO: campo no disponible en el Schedule: " + nombre)
-        if "Categoria" in agregados:
-            sd.AddSortGroupField(ScheduleSortGroupField(agregados["Categoria"].FieldId))
-        if "PAC_Codigo_Elemento" in agregados:
-            sd.AddSortGroupField(ScheduleSortGroupField(agregados["PAC_Codigo_Elemento"].FieldId))
-            try:
-                sd.AddFilter(ScheduleFilter(agregados["PAC_Codigo_Elemento"].FieldId, ScheduleFilterType.HasValue))
-            except Exception:
-                pass
-        sd.IsItemized = True
+    sd = vs.Definition
+    try:
+        sd.ClearSortGroupFields()
+        sd.ClearFilters()
+    except Exception:
+        pass
+    while sd.GetFieldCount() > 0:
+        sd.RemoveField(0)
+    ids = {}
+    for sf in sd.GetSchedulableFields():
+        if sf.FieldType == ScheduleFieldType.Count:
+            ids["#"] = sf
+            continue
+        pid = sf.ParameterId
+        if pid == ElementId(BuiltInParameter.ELEM_CATEGORY_PARAM):
+            ids["Categoria"] = sf
+        elif pid == ElementId(BuiltInParameter.ELEM_FAMILY_AND_TYPE_PARAM):
+            ids["Familia y tipo"] = sf
+        else:
+            ids.setdefault(sf.GetName(doc), sf)
+    agregados = {}
+    for nombre in CAMPOS_SCHEDULE:
+        if nombre in ids:
+            fld = sd.AddField(ids[nombre])
+            fld.ColumnHeading = ENCABEZADOS.get(nombre, nombre)
+            agregados[nombre] = fld
+        else:
+            log("  AVISO: campo no disponible en el Schedule: " + nombre)
+    if "Categoria" in agregados:
+        sd.AddSortGroupField(ScheduleSortGroupField(agregados["Categoria"].FieldId))
+    if "PAC_Codigo_Elemento" in agregados:
+        sd.AddSortGroupField(ScheduleSortGroupField(agregados["PAC_Codigo_Elemento"].FieldId))
+        try:
+            sd.AddFilter(ScheduleFilter(agregados["PAC_Codigo_Elemento"].FieldId, ScheduleFilterType.HasValue))
+        except Exception:
+            pass
+    sd.IsItemized = True
+
+    v3 = None
+    for v in FilteredElementCollector(doc).OfClass(View3D):
+        if v.Name == NOMBRE_3D:
+            v3 = v
+    if v3 is None:
+        vft = [x for x in FilteredElementCollector(doc).OfClass(ViewFamilyType)
+               if x.ViewFamily == ViewFamily.ThreeDimensional][0]
+        v3 = View3D.CreateIsometric(doc, vft.Id)
+        v3.Name = NOMBRE_3D
+    v3.DisplayStyle = DisplayStyle.ShadingWithEdges
+    v3.DetailLevel = ViewDetailLevel.Fine
+    for bic in (BuiltInCategory.OST_Grids, BuiltInCategory.OST_Levels):
+        try:
+            v3.SetCategoryHidden(ElementId(bic), True)
+        except Exception:
+            pass
     t.Commit()
     app.SharedParametersFilename = anterior
     try:
-        uidoc.ActiveView = vs
+        uidoc.ActiveView = v3
     except Exception:
-        log("  (Abra el Schedule desde el Navegador de proyectos > Tablas de planificacion)")
-    log("LISTO. Revise el Schedule '" + NOMBRE_SCHEDULE + "' y la hoja QA_QC de la matriz.")
+        log("  (Abra la vista '" + NOMBRE_3D + "' desde el Navegador de proyectos)")
+    log("LISTO. Vista 3D: '" + NOMBRE_3D + "'. Schedule: '" + NOMBRE_SCHEDULE + "'.")
 
 
 try:
@@ -761,7 +1315,6 @@ try:
 except Exception as ex:
     import traceback
     log("ERROR: " + str(ex))
-    print(traceback.format_exc())
     LOG.append(traceback.format_exc())
     try:
         from Autodesk.Revit.UI import TaskDialog

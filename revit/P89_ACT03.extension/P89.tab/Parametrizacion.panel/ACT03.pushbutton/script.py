@@ -38,7 +38,7 @@ from Autodesk.Revit.DB import (
     Transaction, TypeBinding, UnitTypeId, UnitUtils, ViewSchedule, XYZ,
     SpecTypeId, FormatOptions, Color, View3D, ViewFamilyType, ViewFamily, DisplayStyle,
     ViewDetailLevel, ViewPlan, FloorType, Floor, CurveLoop, CompoundStructure,
-    MaterialFunctionAssignment, FamilyInstance)
+    MaterialFunctionAssignment, FamilyInstance, EndCapCondition, TransactionStatus)
 from System.Collections.Generic import List
 from Autodesk.Revit.DB.Structure import StructuralType, StructuralInstanceUsage
 
@@ -974,6 +974,16 @@ def codigos_existentes():
 
 
 # ------------------------------------------------------------------- proceso
+TRANS = []
+
+
+def trans(nombre):
+    t = Transaction(doc, nombre)
+    t.Start()
+    TRANS.append(t)
+    return t
+
+
 def unidades_metricas():
     u = doc.GetUnits()
     for spec, unit, acc in ((SpecTypeId.Length, UnitTypeId.Meters, 0.01),
@@ -1030,8 +1040,7 @@ def main():
 
     # 2) parametros comunes -> proyecto + unidades + informacion de proyecto
     log("2) Parametros comunes, unidades en metros e informacion de proyecto")
-    t = Transaction(doc, "P89 parametros comunes")
-    t.Start()
+    t = trans("P89 parametros comunes")
     unidades_metricas()
     cats = CategorySet()
     for bic in (BuiltInCategory.OST_StructuralFoundation, BuiltInCategory.OST_StructuralColumns,
@@ -1081,8 +1090,7 @@ def main():
 
     # 4) modelo
     log("4) Niveles, ejes, materiales, tipos y elementos")
-    t = Transaction(doc, "P89 modelo")
-    t.Start()
+    t = trans("P89 modelo")
     lv = {}
     for n, e in NIVELES:
         lv[n] = nivel(n, e)
@@ -1147,8 +1155,25 @@ def main():
         base_ft = [x for x in FilteredElementCollector(doc).OfClass(FloorType)
                    if x.GetCompoundStructure() is not None and not x.IsFoundationSlab][0]
         ft = base_ft.Duplicate(LOSA["tipo"])
-    ft.SetCompoundStructure(CompoundStructure.CreateSingleLayerCompoundStructure(
-        MaterialFunctionAssignment.Structure, m(LOSA["espesor"]), mats["LOS"]))
+    try:
+        cs = CompoundStructure.CreateSingleLayerCompoundStructure(
+            MaterialFunctionAssignment.Structure, m(LOSA["espesor"]), mats["LOS"])
+        try:
+            cs.EndCap = EndCapCondition.NoEndCap
+        except Exception:
+            pass
+        ft.SetCompoundStructure(cs)
+    except Exception:
+        try:
+            # alternativa: ajustar la capa estructural del tipo existente
+            cs = ft.GetCompoundStructure()
+            i = cs.StructuralMaterialIndex if cs.StructuralMaterialIndex >= 0 else 0
+            cs.SetLayerWidth(i, m(LOSA["espesor"]))
+            cs.SetMaterialId(i, mats["LOS"])
+            ft.SetCompoundStructure(cs)
+            log("  Losa: se ajusto la capa estructural del tipo base")
+        except Exception as e:
+            log("  AVISO losa: no se pudo cambiar la estructura del tipo (" + str(e) + "); se usa la del tipo base")
     set_val(ft, "PAC_Material_Estructural", "Concreto reforzado f'c 21 MPa")
     set_val(ft, "PAC_Resistencia_MPa", 21, unidad=None)
     set_val(ft, "PAC_Clasificacion_IFC_Uniclass", LOSA["clasificacion"])
@@ -1225,9 +1250,12 @@ def main():
             cl.Append(linea(x1, y1, x2, y2, n3.Elevation))
         loops = List[CurveLoop]()
         loops.Add(cl)
-        f = Floor.Create(doc, loops, ft.Id, n3.Id, True, None, 0.0)
-        comunes(f, cod, NIVELES[1][0])
-        cont["LOS"] += 1
+        try:
+            f = Floor.Create(doc, loops, ft.Id, n3.Id, True, None, 0.0)
+            comunes(f, cod, NIVELES[1][0])
+            cont["LOS"] += 1
+        except Exception as e:
+            log("  AVISO losa " + cod + ": " + str(e))
 
     s_cor = sym["PHR C 160x60x20"]
     k = 0
@@ -1251,8 +1279,7 @@ def main():
     log("  Elementos nuevos: " + str(cont))
 
     # 5) limpieza: tipos y familias en ingles sin uso
-    t = Transaction(doc, "P89 limpieza")
-    t.Start()
+    t = trans("P89 limpieza")
     usados = set()
     for e in FilteredElementCollector(doc).OfClass(FamilyInstance):
         usados.add(e.Symbol.Id.ToString())
@@ -1285,8 +1312,7 @@ def main():
 
     # 6) schedule y vista 3D
     log("6) Schedule y vista 3D")
-    t = Transaction(doc, "P89 schedule y 3D")
-    t.Start()
+    t = trans("P89 schedule y 3D")
     vs = None
     for v in FilteredElementCollector(doc).OfClass(ViewSchedule):
         if v.Name == NOMBRE_SCHEDULE:
@@ -1361,6 +1387,12 @@ try:
     main()
 except Exception as ex:
     import traceback
+    for _t in TRANS:
+        try:
+            if _t.GetStatus() == TransactionStatus.Started:
+                _t.RollBack()
+        except Exception:
+            pass
     log("ERROR: " + str(ex))
     LOG.append(traceback.format_exc())
     try:

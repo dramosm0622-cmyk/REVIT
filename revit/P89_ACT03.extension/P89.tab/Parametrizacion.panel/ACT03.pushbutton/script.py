@@ -706,7 +706,7 @@ CAMPOS_SCHEDULE = ['Categoria',
  'COR_Separacion',
  '#']
 
-LOG = ["ACT03 version 6"]
+LOG = ["ACT03 version 7"]
 
 
 def log(msg):
@@ -818,7 +818,7 @@ def familia_por_nombre(bic, nombre):
 
 NO_CONCRETO = ["acero", "steel", "wide flange", "madera", "wood", "timber", "hss", "tubo", "metal", "w-", "ipe", "hea",
                "heb", "hem", "ipn", "upn", "uc-", "ub-", "perfil i", "seccion i", u"sección i", "i-", "canal", "channel",
-               "angul", "angle", "laminad", "conformad", "cold formed"]
+               "angulo", u"ángulo", "angle", "laminad", "conformad", "cold formed"]
 RECTANGULARES = ("COL", "VCI", "VIG", "COR")
 CLAVE_CONCRETO = ["hormig", "concret", "concrete"]
 
@@ -837,7 +837,7 @@ def es_rectangular(fam):
 
 
 def no_concreto(nombre):
-    n = nombre.lower()
+    n = nombre.lower().replace("rectangular", "")
     return any(p in n for p in NO_CONCRETO)
 
 

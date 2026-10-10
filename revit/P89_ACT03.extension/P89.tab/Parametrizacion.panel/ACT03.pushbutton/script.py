@@ -706,7 +706,7 @@ CAMPOS_SCHEDULE = ['Categoria',
  'COR_Separacion',
  '#']
 
-LOG = ["ACT03 version 7"]
+LOG = ["ACT03 version 8"]
 
 
 def log(msg):
@@ -995,6 +995,23 @@ def tipo(fam, nombre):
         if s.Name == nombre:
             return s
     return syms[0].Duplicate(nombre)
+
+
+def quitar_capitel(e):
+    """Apaga los si/no 'Mostrar capitel' / 'Mostrar panel...' (Show capital / drop panel)."""
+    n = 0
+    for p in e.Parameters:
+        try:
+            nom = p.Definition.Name.lower()
+            if p.StorageType != StorageType.Integer or p.IsReadOnly:
+                continue
+            if ("mostrar" in nom or "show" in nom) and any(k in nom for k in ("capitel", "capital", "panel", "drop", u"ábaco", "abaco")):
+                if p.AsInteger() != 0:
+                    p.Set(0)
+                    n += 1
+        except Exception:
+            pass
+    return n
 
 
 def codigos_existentes():
@@ -1340,6 +1357,16 @@ def main():
                 cont["COL"] += 1
         except Exception as e:
             aviso("zapata/columna eje " + c["eje"], e)
+
+    # columnas lisas: sin capitel ni panel en la parte superior
+    quitados = 0
+    for e in FilteredElementCollector(doc).OfClass(FamilyInstance).OfCategory(BuiltInCategory.OST_StructuralColumns):
+        try:
+            if e.Symbol.Family.Name.startswith("P89_COL"):
+                quitados += quitar_capitel(e) + quitar_capitel(e.Symbol)
+        except Exception as ex:
+            aviso("capitel", ex)
+    log("  Columnas sin capitel/panel (" + str(quitados) + " opciones desactivadas)")
 
     for v in VIGAS:
         try:

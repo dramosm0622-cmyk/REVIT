@@ -180,42 +180,56 @@ PARAMS = [{'cp': 'Comun',
   'ti': 'Instancia'}]
 FAMILIAS = {'COL': {'ayuda': 'pilar de hormigon rectangular (M_Pilar de hormigon-Rectangular / '
                   'M_Concrete-Rectangular-Column)',
-         'claves': ['Concrete-Rectangular-Column',
+         'claves': ['Hormigón-Pilar rectangular',
+                    'Hormigon-Pilar rectangular',
                     'Pilar de hormig',
+                    'Pilar rectangular',
+                    'Concrete-Rectangular-Column',
                     'Rectangular-Column',
-                    'Hormig',
-                    'Concreto',
-                    'Concrete'],
-         'nombre': 'P89_COL_Columna_Concreto'},
+                    'Columna rectangular',
+                    'Columna de concreto',
+                    'Hormigón-Columna',
+                    'Pilar',
+                    'Columna',
+                    'Column'],
+         'nombre': 'P89_COL_Columna_Concreto',
+         'pistas': ['pilar', 'column']},
  'COR': {'ayuda': 'viga de hormigon rectangular (se usa como base de la correa 60x160 mm)',
-         'claves': ['Concrete-Rectangular Beam',
+         'claves': ['Hormigón-Viga rectangular',
+                    'Hormigon-Viga rectangular',
                     'Viga de hormig',
+                    'Viga rectangular',
+                    'Concrete-Rectangular Beam',
                     'Rectangular Beam',
-                    'Hormig',
-                    'Concreto',
-                    'Concrete'],
-         'nombre': 'P89_COR_Correa_PHR'},
+                    'Viga de concreto'],
+         'nombre': 'P89_COR_Correa_PHR',
+         'pistas': ['armaz', 'framing', 'viga']},
  'VCI': {'ayuda': 'viga de hormigon rectangular (M_Viga de hormigon-Rectangular / M_Concrete-Rectangular '
                   'Beam)',
-         'claves': ['Concrete-Rectangular Beam',
+         'claves': ['Hormigón-Viga rectangular',
+                    'Hormigon-Viga rectangular',
                     'Viga de hormig',
+                    'Viga rectangular',
+                    'Concrete-Rectangular Beam',
                     'Rectangular Beam',
-                    'Hormig',
-                    'Concreto',
-                    'Concrete'],
-         'nombre': 'P89_VCI_Viga_Cimentacion'},
+                    'Viga de concreto'],
+         'nombre': 'P89_VCI_Viga_Cimentacion',
+         'pistas': ['armaz', 'framing', 'viga']},
  'VIG': {'ayuda': 'viga de hormigon rectangular (M_Viga de hormigon-Rectangular / M_Concrete-Rectangular '
                   'Beam)',
-         'claves': ['Concrete-Rectangular Beam',
+         'claves': ['Hormigón-Viga rectangular',
+                    'Hormigon-Viga rectangular',
                     'Viga de hormig',
+                    'Viga rectangular',
+                    'Concrete-Rectangular Beam',
                     'Rectangular Beam',
-                    'Hormig',
-                    'Concreto',
-                    'Concrete'],
-         'nombre': 'P89_VIG_Viga_Aerea'},
+                    'Viga de concreto'],
+         'nombre': 'P89_VIG_Viga_Aerea',
+         'pistas': ['armaz', 'framing', 'viga']},
  'ZAP': {'ayuda': 'cimentacion aislada rectangular (M_Zapata-Rectangular / M_Footing-Rectangular)',
-         'claves': ['Footing-Rectangular', 'Zapata-Rectangular', 'Zapata rectangular', 'Zapata', 'Footing'],
-         'nombre': 'P89_ZAP_Zapata_Aislada'}}
+         'claves': ['Zapata-Rectangular', 'Footing-Rectangular', 'Zapata rectangular', 'Zapata', 'Footing'],
+         'nombre': 'P89_ZAP_Zapata_Aislada',
+         'pistas': ['cimentaci', 'foundation']}}
 AMARRES = {'ZAP': [(['Width', 'Anchura', 'Ancho'], 'ZAP_Lado_B'),
          (['Length', 'Longitud'], 'ZAP_Lado_B'),
          (['Foundation Thickness',
@@ -791,6 +805,14 @@ def familia_por_nombre(bic, nombre):
     return None
 
 
+NO_CONCRETO = ["acero", "steel", "wide flange", "madera", "wood", "timber", "hss", "tubo", "metal", "w-", "ipe", "hea"]
+
+
+def no_concreto(nombre):
+    n = nombre.lower()
+    return any(p in n for p in NO_CONCRETO)
+
+
 def buscar_familia(bic, claves, excluir=()):
     """Familia ya cargada cuyo nombre contenga alguna clave (por orden)."""
     fams = {}
@@ -798,27 +820,52 @@ def buscar_familia(bic, claves, excluir=()):
         fams[s.Family.Name] = s.Family
     for c in claves:
         for n, f in sorted(fams.items()):
-            if c.lower() in n.lower() and not n.startswith("P89_") and n not in excluir:
+            if c.lower() in n.lower() and not n.startswith("P89_") and n not in excluir and not no_concreto(n):
                 return f
     return None
 
 
-def cargar_de_biblioteca(bic, claves):
-    """Busca el .rfa en la biblioteca de Revit instalada y lo carga."""
-    raices = glob.glob(r"C:\ProgramData\Autodesk\RVT *\Libraries")
-    raices = sorted(raices, reverse=True)
-    for raiz in raices:
-        for c in claves:
+_RFA = []
+
+
+def archivos_biblioteca():
+    """Lista (una sola vez) todos los .rfa de las bibliotecas de Revit instaladas."""
+    if not _RFA:
+        raices = sorted(glob.glob(r"C:\ProgramData\Autodesk\RVT *\Libraries"), reverse=True)
+        for raiz in raices:
             for dp, dn, fn in os.walk(raiz):
                 for f in fn:
-                    if f.lower().endswith(".rfa") and c.lower() in f.lower():
-                        t = Transaction(doc, "P89 cargar familia")
-                        t.Start()
-                        ok = doc.LoadFamily(os.path.join(dp, f))
-                        t.Commit()
-                        if ok:
-                            log("  Familia cargada de biblioteca: " + f)
-                            return buscar_familia(bic, [os.path.splitext(f)[0]])
+                    if f.lower().endswith(".rfa"):
+                        _RFA.append(os.path.join(dp, f))
+    return _RFA
+
+
+def cargar_de_biblioteca(bic, claves, pistas=()):
+    """Busca el .rfa en la biblioteca, lo carga y comprueba que sea de la categoria pedida."""
+    cands = []
+    for ruta in archivos_biblioteca():
+        nombre = os.path.basename(ruta).lower()
+        if no_concreto(nombre):
+            continue
+        for i, c in enumerate(claves):
+            if c.lower() in nombre:
+                en_carpeta = any(p in ruta.lower() for p in pistas)
+                cands.append((0 if en_carpeta else 1, i, len(nombre), ruta))
+                break
+    cands.sort()
+    for _a, _b, _c, ruta in cands[:20]:
+        t = Transaction(doc, "P89 cargar familia")
+        t.Start()
+        try:
+            doc.LoadFamily(ruta)
+            t.Commit()
+        except Exception:
+            t.RollBack()
+            continue
+        fam = familia_por_nombre(bic, os.path.splitext(os.path.basename(ruta))[0])
+        if fam is not None:
+            log("  Familia cargada de biblioteca: " + os.path.basename(ruta))
+            return fam
     return None
 
 
@@ -1025,7 +1072,7 @@ def main():
             continue
         base = buscar_familia(bic, FAMILIAS[codigo]["claves"])
         if base is None:
-            base = cargar_de_biblioteca(bic, FAMILIAS[codigo]["claves"])
+            base = cargar_de_biblioteca(bic, FAMILIAS[codigo]["claves"], FAMILIAS[codigo]["pistas"])
         if base is None:
             raise Exception("No se encontro una familia para " + codigo + ". Cargue una familia de "
                             + FAMILIAS[codigo]["ayuda"] + " (Insertar > Cargar familia) y vuelva a ejecutar.")

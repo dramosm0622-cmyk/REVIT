@@ -189,9 +189,11 @@ FAMILIAS = {'COL': {'ayuda': 'pilar de hormigon rectangular (M_Pilar de hormigon
                     'Columna rectangular',
                     'Columna de concreto',
                     'Hormigón-Columna',
-                    'Pilar',
-                    'Columna',
-                    'Column'],
+                    'Pilar de hormigón',
+                    'Hormigon',
+                    'Hormigón',
+                    'Concreto',
+                    'Concrete'],
          'nombre': 'P89_COL_Columna_Concreto',
          'pistas': ['pilar', 'column']},
  'COR': {'ayuda': 'viga de hormigon rectangular (se usa como base de la correa 60x160 mm)',
@@ -201,7 +203,10 @@ FAMILIAS = {'COL': {'ayuda': 'pilar de hormigon rectangular (M_Pilar de hormigon
                     'Viga rectangular',
                     'Concrete-Rectangular Beam',
                     'Rectangular Beam',
-                    'Viga de concreto'],
+                    'Viga de concreto',
+                    'Hormigón',
+                    'Hormigon',
+                    'Concrete'],
          'nombre': 'P89_COR_Correa_PHR',
          'pistas': ['armaz', 'framing', 'viga']},
  'VCI': {'ayuda': 'viga de hormigon rectangular (M_Viga de hormigon-Rectangular / M_Concrete-Rectangular '
@@ -212,7 +217,10 @@ FAMILIAS = {'COL': {'ayuda': 'pilar de hormigon rectangular (M_Pilar de hormigon
                     'Viga rectangular',
                     'Concrete-Rectangular Beam',
                     'Rectangular Beam',
-                    'Viga de concreto'],
+                    'Viga de concreto',
+                    'Hormigón',
+                    'Hormigon',
+                    'Concrete'],
          'nombre': 'P89_VCI_Viga_Cimentacion',
          'pistas': ['armaz', 'framing', 'viga']},
  'VIG': {'ayuda': 'viga de hormigon rectangular (M_Viga de hormigon-Rectangular / M_Concrete-Rectangular '
@@ -223,7 +231,10 @@ FAMILIAS = {'COL': {'ayuda': 'pilar de hormigon rectangular (M_Pilar de hormigon
                     'Viga rectangular',
                     'Concrete-Rectangular Beam',
                     'Rectangular Beam',
-                    'Viga de concreto'],
+                    'Viga de concreto',
+                    'Hormigón',
+                    'Hormigon',
+                    'Concrete'],
          'nombre': 'P89_VIG_Viga_Aerea',
          'pistas': ['armaz', 'framing', 'viga']},
  'ZAP': {'ayuda': 'cimentacion aislada rectangular (M_Zapata-Rectangular / M_Footing-Rectangular)',
@@ -695,7 +706,7 @@ CAMPOS_SCHEDULE = ['Categoria',
  'COR_Separacion',
  '#']
 
-LOG = ["ACT03 version 5"]
+LOG = ["ACT03 version 6"]
 
 
 def log(msg):
@@ -805,7 +816,24 @@ def familia_por_nombre(bic, nombre):
     return None
 
 
-NO_CONCRETO = ["acero", "steel", "wide flange", "madera", "wood", "timber", "hss", "tubo", "metal", "w-", "ipe", "hea"]
+NO_CONCRETO = ["acero", "steel", "wide flange", "madera", "wood", "timber", "hss", "tubo", "metal", "w-", "ipe", "hea",
+               "heb", "hem", "ipn", "upn", "uc-", "ub-", "perfil i", "seccion i", u"sección i", "i-", "canal", "channel",
+               "angul", "angle", "laminad", "conformad", "cold formed"]
+RECTANGULARES = ("COL", "VCI", "VIG", "COR")
+CLAVE_CONCRETO = ["hormig", "concret", "concrete"]
+
+
+def es_rectangular(fam):
+    """True si la familia tiene seccion b x h de concreto (no perfil metalico)."""
+    try:
+        s = doc.GetElement(list(fam.GetFamilySymbolIds())[0])
+    except Exception:
+        return False
+    tiene_bh = lookup(s, ["b", "Anchura", "Width"]) is not None and \
+        lookup(s, ["h", "Altura", "Profundidad", "Height", "Depth"]) is not None
+    perfil = lookup(s, ["tw", "tf", "Espesor de alma", "Espesor de ala", "Web Thickness", "Flange Thickness",
+                        "bf", "Ancho de ala", "Flange Width"]) is not None
+    return tiene_bh and not perfil
 
 
 def no_concreto(nombre):
@@ -813,7 +841,7 @@ def no_concreto(nombre):
     return any(p in n for p in NO_CONCRETO)
 
 
-def buscar_familia(bic, claves, excluir=()):
+def buscar_familia(bic, claves, excluir=(), rect=False):
     """Familia ya cargada cuyo nombre contenga alguna clave (por orden)."""
     fams = {}
     for s in simbolos(bic):
@@ -821,6 +849,8 @@ def buscar_familia(bic, claves, excluir=()):
     for c in claves:
         for n, f in sorted(fams.items()):
             if c.lower() in n.lower() and not n.startswith("P89_") and n not in excluir and not no_concreto(n):
+                if rect and (not any(k in n.lower() for k in CLAVE_CONCRETO) or not es_rectangular(f)):
+                    continue
                 return f
     return None
 
@@ -840,12 +870,14 @@ def archivos_biblioteca():
     return _RFA
 
 
-def cargar_de_biblioteca(bic, claves, pistas=()):
+def cargar_de_biblioteca(bic, claves, pistas=(), rect=False):
     """Busca el .rfa en la biblioteca, lo carga y comprueba que sea de la categoria pedida."""
     cands = []
     for ruta in archivos_biblioteca():
         nombre = os.path.basename(ruta).lower()
         if no_concreto(nombre):
+            continue
+        if rect and not any(k in nombre for k in CLAVE_CONCRETO):
             continue
         for i, c in enumerate(claves):
             if c.lower() in nombre:
@@ -863,6 +895,8 @@ def cargar_de_biblioteca(bic, claves, pistas=()):
             t.RollBack()
             continue
         fam = familia_por_nombre(bic, os.path.splitext(os.path.basename(ruta))[0])
+        if fam is not None and rect and not es_rectangular(fam):
+            continue
         if fam is not None:
             log("  Familia cargada de biblioteca: " + os.path.basename(ruta))
             return fam
@@ -976,6 +1010,7 @@ def codigos_existentes():
 # ------------------------------------------------------------------- proceso
 TRANS = []
 ERRORES = []
+INCORRECTAS = {}
 
 
 def aviso(que, e):
@@ -1098,14 +1133,28 @@ def main():
     for codigo in ("ZAP", "COL", "VCI", "COR", "VIG"):
         nombre = FAMILIAS[codigo]["nombre"]
         bic = BIC[codigo]
+        rect = codigo in RECTANGULARES
         ya = familia_por_nombre(bic, nombre)
+        if ya is not None and rect and not es_rectangular(ya):
+            log(" " + codigo + ": " + nombre + " NO es de concreto rectangular (perfil metalico); se reconstruye")
+            tr = trans("P89 renombrar familia incorrecta")
+            try:
+                ya.Name = nombre + "_INCORRECTA"
+                tr.Commit()
+            except Exception as ex:
+                tr.RollBack()
+                aviso("renombrar familia incorrecta", ex)
+                nombre = nombre + "_Hormigon"
+                FAMILIAS[codigo]["nombre"] = nombre
+            INCORRECTAS[codigo] = ya
+            ya = None
         if ya is not None:
             log(" " + codigo + ": " + nombre + " ya existe, se reutiliza")
             fams[codigo] = ya
             continue
-        base = buscar_familia(bic, FAMILIAS[codigo]["claves"])
+        base = buscar_familia(bic, FAMILIAS[codigo]["claves"], rect=rect)
         if base is None:
-            base = cargar_de_biblioteca(bic, FAMILIAS[codigo]["claves"], FAMILIAS[codigo]["pistas"])
+            base = cargar_de_biblioteca(bic, FAMILIAS[codigo]["claves"], FAMILIAS[codigo]["pistas"], rect=rect)
         if base is None:
             raise Exception("No se encontro una familia para " + codigo + ". Cargue una familia de "
                             + FAMILIAS[codigo]["ayuda"] + " (Insertar > Cargar familia) y vuelva a ejecutar.")
@@ -1225,6 +1274,32 @@ def main():
         except Exception as e:
             aviso("borrar correa anterior", e)
         log("  Se elimino la correa anterior (P89_COR_Perfil_C_PHR); se crean de nuevo con P89_COR_Correa_PHR")
+    doc.Regenerate()
+
+    for codigo, mala in INCORRECTAS.items():
+        cambiados = 0
+        for e in FilteredElementCollector(doc).OfClass(FamilyInstance).OfCategory(BIC[codigo]):
+            try:
+                if e.Symbol.Family.Id != mala.Id:
+                    continue
+                nuevo = sym.get(e.Symbol.Name)
+                if nuevo is None:
+                    continue
+                pa = e.LookupParameter("COL_Altura_Libre")
+                alt = pa.AsDouble() if pa is not None else None
+                e.ChangeTypeId(nuevo.Id)
+                if alt:
+                    pn = e.LookupParameter("COL_Altura_Libre")
+                    if pn is not None and not pn.IsReadOnly:
+                        pn.Set(alt)
+                cambiados += 1
+            except Exception as ex:
+                aviso("cambiar tipo " + codigo, ex)
+        log("  " + str(cambiados) + " elementos pasados de la familia incorrecta a " + FAMILIAS[codigo]["nombre"])
+        try:
+            doc.Delete(mala.Id)
+        except Exception as ex:
+            aviso("borrar familia incorrecta " + codigo, ex)
     doc.Regenerate()
 
     hechos = codigos_existentes()

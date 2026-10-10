@@ -42,19 +42,24 @@ Ok "Proyecto encontrado en $root"
 # 2) Python
 Paso 2 "Buscando Python 3.10 o superior"
 $py = $null
-foreach ($cand in @('py', 'python')) {
-    $cmd = Get-Command $cand -ErrorAction SilentlyContinue
-    if ($cmd -and $cmd.Source -notlike '*WindowsApps*') {
-        try {
-            $args0 = @('-c', 'import sys; print(sys.executable); print(sys.version_info[0]*100+sys.version_info[1])')
-            if ($cand -eq 'py') { $args0 = @('-3') + $args0 }
-            $out = & $cmd.Source @args0 2>$null
-            if ($out -and [int]$out[1] -ge 310) { $py = $out[0].Trim(); break }
-        } catch { }
-    }
+$cands = @()
+foreach ($c in @('py', 'python', 'python3')) {
+    Get-Command $c -All -ErrorAction SilentlyContinue | ForEach-Object { $cands += $_.Source }
+}
+$cands += (Get-ChildItem "$env:LOCALAPPDATA\Python\*\python.exe" -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
+$cands += (Get-ChildItem "$env:LOCALAPPDATA\Programs\Python\Python3*\python.exe" -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
+$cands += (Get-ChildItem "$env:ProgramFiles\Python3*\python.exe" -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
+$cands += (Get-ChildItem "C:\Python3*\python.exe" -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
+foreach ($exe in ($cands | Select-Object -Unique)) {
+    try {
+        $a0 = @('-c', 'import sys; print(sys.executable); print(sys.version_info[0]*100+sys.version_info[1])')
+        if ((Split-Path -Leaf $exe) -like 'py*.exe' -and (Split-Path -Leaf $exe) -notlike 'python*') { $a0 = @('-3') + $a0 }
+        $out = & $exe @a0 2>$null
+        if ($LASTEXITCODE -eq 0 -and $out -and $out.Count -ge 2 -and [int]$out[1] -ge 310) { $py = $out[0].Trim(); break }
+    } catch { }
 }
 if (-not $py) {
-    Mal "No se encontro Python 3.10+. Instalelo desde https://www.python.org/downloads/ marcando 'Add Python to PATH' y vuelva a ejecutar INSTALAR.bat."
+    Mal "No se encontro Python 3.10+. Abra el menu Inicio, escriba 'Python 3.14', abralo y escriba exit() para cerrarlo; luego vuelva a ejecutar INSTALAR.bat. Si sigue el error, reinstale Python desde https://www.python.org/downloads/ marcando 'Add python.exe to PATH'."
 }
 Ok "Python: $py"
 

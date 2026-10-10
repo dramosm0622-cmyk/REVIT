@@ -695,7 +695,7 @@ CAMPOS_SCHEDULE = ['Categoria',
  'COR_Separacion',
  '#']
 
-LOG = []
+LOG = ["ACT03 version 5"]
 
 
 def log(msg):
@@ -975,6 +975,26 @@ def codigos_existentes():
 
 # ------------------------------------------------------------------- proceso
 TRANS = []
+ERRORES = []
+
+
+def aviso(que, e):
+    ERRORES.append(que)
+    if len(ERRORES) <= 15:
+        log("  AVISO en " + que + ": " + str(e))
+
+
+def punto(t, nombre):
+    """Guarda lo hecho hasta aqui y abre una nueva transaccion."""
+    try:
+        t.Commit()
+    except Exception as e:
+        aviso("guardar " + nombre, e)
+        try:
+            t.RollBack()
+        except Exception:
+            pass
+    return trans(nombre)
 
 
 def trans(nombre):
@@ -1041,7 +1061,11 @@ def main():
     # 2) parametros comunes -> proyecto + unidades + informacion de proyecto
     log("2) Parametros comunes, unidades en metros e informacion de proyecto")
     t = trans("P89 parametros comunes")
-    unidades_metricas()
+    try:
+        unidades_metricas()
+        log("  Unidades del proyecto: metros")
+    except Exception as e:
+        aviso("unidades", e)
     cats = CategorySet()
     for bic in (BuiltInCategory.OST_StructuralFoundation, BuiltInCategory.OST_StructuralColumns,
                 BuiltInCategory.OST_StructuralFraming, BuiltInCategory.OST_Floors):
@@ -1090,7 +1114,7 @@ def main():
 
     # 4) modelo
     log("4) Niveles, ejes, materiales, tipos y elementos")
-    t = trans("P89 modelo")
+    t = trans("P89 niveles y ejes")
     lv = {}
     for n, e in NIVELES:
         lv[n] = nivel(n, e)
@@ -1112,77 +1136,94 @@ def main():
         if n not in grids:
             g = Grid.Create(doc, Line.CreateBound(XYZ(m(-1.8), m(y), 0), XYZ(m(17.4), m(y), 0)))
             g.Name = n
+    t = punto(t, "P89 materiales y tipos")
 
-    mats = dict((k, material_color(k)) for k in MATERIALES)
+    mats = {}
+    for k in MATERIALES:
+        try:
+            mats[k] = material_color(k)
+        except Exception as e:
+            aviso("material " + k, e)
     clas = dict((o, v) for o, v in CLASIFICACION)
     sym = {}
     for cod, nom, b, h, mat, fc, ref in TIPOS:
-        s = tipo(fams[cod], nom)
-        if not s.IsActive:
-            s.Activate()
-        set_val(s, "PAC_Material_Estructural", mat)
-        set_val(s, "PAC_Resistencia_MPa", fc, unidad=None)
-        set_val(s, "PAC_Clasificacion_IFC_Uniclass", clas[cod])
-        poner_material(s, mats[cod])
         try:
-            s.get_Parameter(BuiltInParameter.ALL_MODEL_DESCRIPTION).Set(DESCRIPCIONES.get(cod, ""))
-        except Exception:
-            pass
-        sec = ("%.2fx%.2f" % (b, h)).replace(".", ",")
-        if cod == "ZAP":
-            set_val(s, "ZAP_Lado_B", b)
-            set_val(s, "ZAP_Espesor_h", h)
-        else:
-            set_val(s, ["b", "Anchura", "Width"], b)
-            set_val(s, ["h", "Altura", "Profundidad", "Height", "Depth"], h)
-        if cod == "COL":
-            set_val(s, "COL_Seccion_bxh", sec)
-            set_val(s, "COL_Refuerzo_Longitudinal", ref)
-        elif cod == "VCI":
-            set_val(s, "VCI_Seccion_bxh", sec)
-            set_val(s, "VCI_Refuerzo", ref)
-        elif cod == "COR":
-            set_val(s, "COR_Designacion_Perfil", nom)
-            set_val(s, "COR_Espesor_Lamina", 1.50, unidad="mm")
-        sym[nom] = s
+            s = tipo(fams[cod], nom)
+            if not s.IsActive:
+                s.Activate()
+            set_val(s, "PAC_Material_Estructural", mat)
+            set_val(s, "PAC_Resistencia_MPa", fc, unidad=None)
+            set_val(s, "PAC_Clasificacion_IFC_Uniclass", clas[cod])
+            if cod in mats:
+                poner_material(s, mats[cod])
+            try:
+                s.get_Parameter(BuiltInParameter.ALL_MODEL_DESCRIPTION).Set(DESCRIPCIONES.get(cod, ""))
+            except Exception:
+                pass
+            sec = ("%.2fx%.2f" % (b, h)).replace(".", ",")
+            if cod == "ZAP":
+                set_val(s, "ZAP_Lado_B", b)
+                set_val(s, "ZAP_Espesor_h", h)
+            else:
+                set_val(s, ["b", "Anchura", "Width"], b)
+                set_val(s, ["h", "Altura", "Profundidad", "Height", "Depth"], h)
+            if cod == "COL":
+                set_val(s, "COL_Seccion_bxh", sec)
+                set_val(s, "COL_Refuerzo_Longitudinal", ref)
+            elif cod == "VCI":
+                set_val(s, "VCI_Seccion_bxh", sec)
+                set_val(s, "VCI_Refuerzo", ref)
+            elif cod == "COR":
+                set_val(s, "COR_Designacion_Perfil", nom)
+                set_val(s, "COR_Espesor_Lamina", 1.50, unidad="mm")
+            sym[nom] = s
+        except Exception as e:
+            aviso("tipo " + nom, e)
 
     # tipo de losa
     ft = None
-    for x in FilteredElementCollector(doc).OfClass(FloorType):
-        if x.Name == LOSA["tipo"]:
-            ft = x
-    if ft is None:
-        base_ft = [x for x in FilteredElementCollector(doc).OfClass(FloorType)
-                   if x.GetCompoundStructure() is not None and not x.IsFoundationSlab][0]
-        ft = base_ft.Duplicate(LOSA["tipo"])
     try:
-        cs = CompoundStructure.CreateSingleLayerCompoundStructure(
-            MaterialFunctionAssignment.Structure, m(LOSA["espesor"]), mats["LOS"])
+        ft = None
+        for x in FilteredElementCollector(doc).OfClass(FloorType):
+            if x.Name == LOSA["tipo"]:
+                ft = x
+        if ft is None:
+            base_ft = [x for x in FilteredElementCollector(doc).OfClass(FloorType)
+                       if x.GetCompoundStructure() is not None and not x.IsFoundationSlab][0]
+            ft = base_ft.Duplicate(LOSA["tipo"])
         try:
-            cs.EndCap = EndCapCondition.NoEndCap
-        except Exception:
-            pass
-        ft.SetCompoundStructure(cs)
-    except Exception:
-        try:
-            # alternativa: ajustar la capa estructural del tipo existente
-            cs = ft.GetCompoundStructure()
-            i = cs.StructuralMaterialIndex if cs.StructuralMaterialIndex >= 0 else 0
-            cs.SetLayerWidth(i, m(LOSA["espesor"]))
-            cs.SetMaterialId(i, mats["LOS"])
+            cs = CompoundStructure.CreateSingleLayerCompoundStructure(
+                MaterialFunctionAssignment.Structure, m(LOSA["espesor"]), mats.get("LOS", ElementId.InvalidElementId))
+            try:
+                cs.EndCap = EndCapCondition.NoEndCap
+            except Exception:
+                pass
             ft.SetCompoundStructure(cs)
-            log("  Losa: se ajusto la capa estructural del tipo base")
-        except Exception as e:
-            log("  AVISO losa: no se pudo cambiar la estructura del tipo (" + str(e) + "); se usa la del tipo base")
-    set_val(ft, "PAC_Material_Estructural", "Concreto reforzado f'c 21 MPa")
-    set_val(ft, "PAC_Resistencia_MPa", 21, unidad=None)
-    set_val(ft, "PAC_Clasificacion_IFC_Uniclass", LOSA["clasificacion"])
-    doc.Regenerate()
+        except Exception:
+            try:
+                # alternativa: ajustar la capa estructural del tipo existente
+                cs = ft.GetCompoundStructure()
+                i = cs.StructuralMaterialIndex if cs.StructuralMaterialIndex >= 0 else 0
+                cs.SetLayerWidth(i, m(LOSA["espesor"]))
+                cs.SetMaterialId(i, mats.get("LOS", ElementId.InvalidElementId))
+                ft.SetCompoundStructure(cs)
+                log("  Losa: se ajusto la capa estructural del tipo base")
+            except Exception as e:
+                log("  AVISO losa: no se pudo cambiar la estructura del tipo (" + str(e) + "); se usa la del tipo base")
+        set_val(ft, "PAC_Material_Estructural", "Concreto reforzado f'c 21 MPa")
+        set_val(ft, "PAC_Resistencia_MPa", 21, unidad=None)
+        set_val(ft, "PAC_Clasificacion_IFC_Uniclass", LOSA["clasificacion"])
+    except Exception as e:
+        aviso("tipo de losa", e)
+    t = punto(t, "P89 elementos")
 
     # la correa de la version anterior (perfil de biblioteca) se reemplaza por la nueva
     vieja = familia_por_nombre(BuiltInCategory.OST_StructuralFraming, "P89_COR_Perfil_C_PHR")
     if vieja is not None:
-        doc.Delete(vieja.Id)
+        try:
+            doc.Delete(vieja.Id)
+        except Exception as e:
+            aviso("borrar correa anterior", e)
         log("  Se elimino la correa anterior (P89_COR_Perfil_C_PHR); se crean de nuevo con P89_COR_Correa_PHR")
     doc.Regenerate()
 
@@ -1195,53 +1236,62 @@ def main():
         set_val(e, "PAC_Nivel_Referencia", nivel_txt)
 
     for c in COLUMNAS:
-        eje = c["eje"]
-        z_cod = "ZAP-" + c["zap"].replace("-", "") + "-" + eje
-        if z_cod not in hechos:
-            z = doc.Create.NewFamilyInstance(XYZ(m(c["x"]), m(c["y"]), 0), sym[c["zap"]], n0, StructuralType.Footing)
-            ok = False
-            for bip in (BuiltInParameter.INSTANCE_FREE_HOST_OFFSET_PARAM,
-                        BuiltInParameter.INSTANCE_ELEVATION_PARAM,
-                        BuiltInParameter.FLOOR_HEIGHTABOVELEVEL_PARAM):
-                if set_bip(z, bip, TOPE_ZAPATA):
-                    ok = True
-                    break
-            if not ok:
-                set_val(z, NOMBRES_DESFASE, TOPE_ZAPATA)
-            comunes(z, z_cod, NIVELES[0][0])
-            cont["ZAP"] += 1
-        c_cod = "COL-" + c["sec"].replace("-", "").replace("x", "X") + "-" + eje
-        if c_cod not in hechos:
-            col = doc.Create.NewFamilyInstance(XYZ(m(c["x"]), m(c["y"]), 0), sym[c["sec"]], n0, StructuralType.Column)
-            top = n6 if c["n3"] else n3
-            set_bip(col, BuiltInParameter.FAMILY_TOP_LEVEL_PARAM, top.Id)
-            set_bip(col, BuiltInParameter.FAMILY_TOP_LEVEL_OFFSET_PARAM, 0.0)
-            set_bip(col, BuiltInParameter.FAMILY_BASE_LEVEL_OFFSET_PARAM, TOPE_ZAPATA)
-            alt = round(UnitUtils.ConvertFromInternalUnits(top.Elevation, UnitTypeId.Meters) - PERALTE_VIGA, 2)
-            set_val(col, "COL_Altura_Libre", alt)
-            comunes(col, c_cod, NIVELES[0][0])
-            cont["COL"] += 1
+        try:
+            eje = c["eje"]
+            z_cod = "ZAP-" + c["zap"].replace("-", "") + "-" + eje
+            if z_cod not in hechos:
+                z = doc.Create.NewFamilyInstance(XYZ(m(c["x"]), m(c["y"]), 0), sym[c["zap"]], n0, StructuralType.Footing)
+                ok = False
+                for bip in (BuiltInParameter.INSTANCE_FREE_HOST_OFFSET_PARAM,
+                            BuiltInParameter.INSTANCE_ELEVATION_PARAM,
+                            BuiltInParameter.FLOOR_HEIGHTABOVELEVEL_PARAM):
+                    if set_bip(z, bip, TOPE_ZAPATA):
+                        ok = True
+                        break
+                if not ok:
+                    set_val(z, NOMBRES_DESFASE, TOPE_ZAPATA)
+                comunes(z, z_cod, NIVELES[0][0])
+                cont["ZAP"] += 1
+            c_cod = "COL-" + c["sec"].replace("-", "").replace("x", "X") + "-" + eje
+            if c_cod not in hechos:
+                col = doc.Create.NewFamilyInstance(XYZ(m(c["x"]), m(c["y"]), 0), sym[c["sec"]], n0, StructuralType.Column)
+                top = n6 if c["n3"] else n3
+                set_bip(col, BuiltInParameter.FAMILY_TOP_LEVEL_PARAM, top.Id)
+                set_bip(col, BuiltInParameter.FAMILY_TOP_LEVEL_OFFSET_PARAM, 0.0)
+                set_bip(col, BuiltInParameter.FAMILY_BASE_LEVEL_OFFSET_PARAM, TOPE_ZAPATA)
+                alt = round(UnitUtils.ConvertFromInternalUnits(top.Elevation, UnitTypeId.Meters) - PERALTE_VIGA, 2)
+                set_val(col, "COL_Altura_Libre", alt)
+                comunes(col, c_cod, NIVELES[0][0])
+                cont["COL"] += 1
+        except Exception as e:
+            aviso("zapata/columna eje " + c["eje"], e)
 
     for v in VIGAS:
-        if v["cod"] in hechos:
-            continue
-        b = doc.Create.NewFamilyInstance(linea(v["x1"], v["y1"], v["x2"], v["y2"]), sym["VC-TIPO"], n0, StructuralType.Beam)
-        set_val(b, "VCI_Eje_Estructural", v["eje"])
-        comunes(b, v["cod"], NIVELES[0][0])
-        cont["VCI"] += 1
+        try:
+            if v["cod"] in hechos:
+                continue
+            b = doc.Create.NewFamilyInstance(linea(v["x1"], v["y1"], v["x2"], v["y2"]), sym["VC-TIPO"], n0, StructuralType.Beam)
+            set_val(b, "VCI_Eje_Estructural", v["eje"])
+            comunes(b, v["cod"], NIVELES[0][0])
+            cont["VCI"] += 1
+        except Exception as e:
+            aviso(v["cod"], e)
 
     # vigas aereas VG
     for v in VIGAS_AEREAS:
-        if v["cod"] in hechos:
-            continue
-        nv = lv[v["nivel"]]
-        b = doc.Create.NewFamilyInstance(linea(v["x1"], v["y1"], v["x2"], v["y2"], nv.Elevation),
-                                         sym[v["tipo"]], nv, StructuralType.Beam)
-        comunes(b, v["cod"], v["nivel"])
-        cont["VIG"] += 1
+        try:
+            if v["cod"] in hechos:
+                continue
+            nv = lv[v["nivel"]]
+            b = doc.Create.NewFamilyInstance(linea(v["x1"], v["y1"], v["x2"], v["y2"], nv.Elevation),
+                                             sym[v["tipo"]], nv, StructuralType.Beam)
+            comunes(b, v["cod"], v["nivel"])
+            cont["VIG"] += 1
+        except Exception as e:
+            aviso(v["cod"], e)
 
     # losa maciza de entrepiso
-    for i, poly in enumerate(LOSA["poligonos"], 1):
+    for i, poly in (enumerate(LOSA["poligonos"], 1) if ft is not None else []):
         cod = "LOS-E%02d-N305-%02d" % (int(round(LOSA["espesor"] * 100)), i)
         if cod in hechos:
             continue
@@ -1257,56 +1307,65 @@ def main():
         except Exception as e:
             log("  AVISO losa " + cod + ": " + str(e))
 
-    s_cor = sym["PHR C 160x60x20"]
+    s_cor = sym.get("PHR C 160x60x20")
     k = 0
     for grp in CORREAS:
         nv = lv[grp["nivel"]]
         z = nv.Elevation + m(ALTO_CORREA)
         for y in grp["y"]:
-            k += 1
-            cod = "COR-PHR-%02d" % k
-            if cod in hechos:
-                continue
-            r = doc.Create.NewFamilyInstance(linea(grp["x1"], y, grp["x2"], y, z), s_cor, nv, StructuralType.Beam)
             try:
-                r.StructuralUsage = StructuralInstanceUsage.Purlin
-            except Exception:
-                pass
-            set_val(r, "COR_Separacion", grp["separacion"])
-            comunes(r, cod, grp["nivel"])
-            cont["COR"] += 1
+                k += 1
+                cod = "COR-PHR-%02d" % k
+                if cod in hechos:
+                    continue
+                r = doc.Create.NewFamilyInstance(linea(grp["x1"], y, grp["x2"], y, z), s_cor, nv, StructuralType.Beam)
+                try:
+                    r.StructuralUsage = StructuralInstanceUsage.Purlin
+                except Exception:
+                    pass
+                set_val(r, "COR_Separacion", grp["separacion"])
+                comunes(r, cod, grp["nivel"])
+                cont["COR"] += 1
+            except Exception as e:
+                aviso("correa %d" % k, e)
     t.Commit()
     log("  Elementos nuevos: " + str(cont))
+    if ERRORES:
+        log("  Hubo " + str(len(ERRORES)) + " avisos (ver arriba); el resto del modelo quedo guardado.")
 
     # 5) limpieza: tipos y familias en ingles sin uso
     t = trans("P89 limpieza")
-    usados = set()
-    for e in FilteredElementCollector(doc).OfClass(FamilyInstance):
-        usados.add(e.Symbol.Id.ToString())
-        usados.add(e.Symbol.Family.Id.ToString())
-    nuestros = set(tt[1] for tt in TIPOS)
     borrados = 0
-    for bic in (BuiltInCategory.OST_StructuralFoundation, BuiltInCategory.OST_StructuralColumns,
-                BuiltInCategory.OST_StructuralFraming):
-        fams_cat = {}
-        for s in simbolos(bic):
-            fams_cat[s.Family.Id.ToString()] = s.Family
-        for fid, fam in fams_cat.items():
-            if fam.Name.startswith("P89_"):
-                for sid in list(fam.GetFamilySymbolIds()):
-                    el = doc.GetElement(sid)
-                    if el.Name not in nuestros and sid.ToString() not in usados:
-                        try:
-                            doc.Delete(sid)
-                            borrados += 1
-                        except Exception:
-                            pass
-            elif fid not in usados:
-                try:
-                    doc.Delete(fam.Id)
-                    borrados += 1
-                except Exception:
-                    pass
+    try:
+        usados = set()
+        for e in FilteredElementCollector(doc).OfClass(FamilyInstance):
+            usados.add(e.Symbol.Id.ToString())
+            usados.add(e.Symbol.Family.Id.ToString())
+        nuestros = set(tt[1] for tt in TIPOS)
+        borrados = 0
+        for bic in (BuiltInCategory.OST_StructuralFoundation, BuiltInCategory.OST_StructuralColumns,
+                    BuiltInCategory.OST_StructuralFraming):
+            fams_cat = {}
+            for s in simbolos(bic):
+                fams_cat[s.Family.Id.ToString()] = s.Family
+            for fid, fam in fams_cat.items():
+                if fam.Name.startswith("P89_"):
+                    for sid in list(fam.GetFamilySymbolIds()):
+                        el = doc.GetElement(sid)
+                        if el.Name not in nuestros and sid.ToString() not in usados:
+                            try:
+                                doc.Delete(sid)
+                                borrados += 1
+                            except Exception:
+                                pass
+                elif fid not in usados:
+                    try:
+                        doc.Delete(fam.Id)
+                        borrados += 1
+                    except Exception:
+                        pass
+    except Exception as e:
+        aviso("limpieza", e)
     t.Commit()
     log("  Tipos/familias sin uso eliminados: " + str(borrados))
 
@@ -1314,70 +1373,76 @@ def main():
     log("6) Schedule y vista 3D")
     t = trans("P89 schedule y 3D")
     vs = None
-    for v in FilteredElementCollector(doc).OfClass(ViewSchedule):
-        if v.Name == NOMBRE_SCHEDULE:
-            vs = v
-    if vs is None:
-        vs = ViewSchedule.CreateSchedule(doc, ElementId.InvalidElementId)
-        vs.Name = NOMBRE_SCHEDULE
-    sd = vs.Definition
     try:
-        sd.ClearSortGroupFields()
-        sd.ClearFilters()
-    except Exception:
-        pass
-    while sd.GetFieldCount() > 0:
-        sd.RemoveField(0)
-    ids = {}
-    for sf in sd.GetSchedulableFields():
-        if sf.FieldType == ScheduleFieldType.Count:
-            ids["#"] = sf
-            continue
-        pid = sf.ParameterId
-        if pid == ElementId(BuiltInParameter.ELEM_CATEGORY_PARAM):
-            ids["Categoria"] = sf
-        elif pid == ElementId(BuiltInParameter.ELEM_FAMILY_AND_TYPE_PARAM):
-            ids["Familia y tipo"] = sf
-        else:
-            ids.setdefault(sf.GetName(doc), sf)
-    agregados = {}
-    for nombre in CAMPOS_SCHEDULE:
-        if nombre in ids:
-            fld = sd.AddField(ids[nombre])
-            fld.ColumnHeading = ENCABEZADOS.get(nombre, nombre)
-            agregados[nombre] = fld
-        else:
-            log("  AVISO: campo no disponible en el Schedule: " + nombre)
-    if "Categoria" in agregados:
-        sd.AddSortGroupField(ScheduleSortGroupField(agregados["Categoria"].FieldId))
-    if "PAC_Codigo_Elemento" in agregados:
-        sd.AddSortGroupField(ScheduleSortGroupField(agregados["PAC_Codigo_Elemento"].FieldId))
+        for v in FilteredElementCollector(doc).OfClass(ViewSchedule):
+            if v.Name == NOMBRE_SCHEDULE:
+                vs = v
+        if vs is None:
+            vs = ViewSchedule.CreateSchedule(doc, ElementId.InvalidElementId)
+            vs.Name = NOMBRE_SCHEDULE
+        sd = vs.Definition
         try:
-            sd.AddFilter(ScheduleFilter(agregados["PAC_Codigo_Elemento"].FieldId, ScheduleFilterType.HasValue))
+            sd.ClearSortGroupFields()
+            sd.ClearFilters()
         except Exception:
             pass
-    sd.IsItemized = True
-
+        for _i in range(sd.GetFieldCount()):
+            sd.RemoveField(0)
+        ids = {}
+        for sf in sd.GetSchedulableFields():
+            if sf.FieldType == ScheduleFieldType.Count:
+                ids["#"] = sf
+                continue
+            pid = sf.ParameterId
+            if pid == ElementId(BuiltInParameter.ELEM_CATEGORY_PARAM):
+                ids["Categoria"] = sf
+            elif pid == ElementId(BuiltInParameter.ELEM_FAMILY_AND_TYPE_PARAM):
+                ids["Familia y tipo"] = sf
+            else:
+                ids.setdefault(sf.GetName(doc), sf)
+        agregados = {}
+        for nombre in CAMPOS_SCHEDULE:
+            if nombre in ids:
+                fld = sd.AddField(ids[nombre])
+                fld.ColumnHeading = ENCABEZADOS.get(nombre, nombre)
+                agregados[nombre] = fld
+            else:
+                log("  AVISO: campo no disponible en el Schedule: " + nombre)
+        if "Categoria" in agregados:
+            sd.AddSortGroupField(ScheduleSortGroupField(agregados["Categoria"].FieldId))
+        if "PAC_Codigo_Elemento" in agregados:
+            sd.AddSortGroupField(ScheduleSortGroupField(agregados["PAC_Codigo_Elemento"].FieldId))
+            try:
+                sd.AddFilter(ScheduleFilter(agregados["PAC_Codigo_Elemento"].FieldId, ScheduleFilterType.HasValue))
+            except Exception:
+                pass
+        sd.IsItemized = True
+    except Exception as e:
+        aviso("Schedule", e)
+    t = punto(t, "P89 vista 3D")
     v3 = None
-    for v in FilteredElementCollector(doc).OfClass(View3D):
-        if v.Name == NOMBRE_3D:
-            v3 = v
-    if v3 is None:
-        vft = [x for x in FilteredElementCollector(doc).OfClass(ViewFamilyType)
-               if x.ViewFamily == ViewFamily.ThreeDimensional][0]
-        v3 = View3D.CreateIsometric(doc, vft.Id)
-        v3.Name = NOMBRE_3D
-    v3.DisplayStyle = DisplayStyle.ShadingWithEdges
-    v3.DetailLevel = ViewDetailLevel.Fine
-    for bic in (BuiltInCategory.OST_Grids, BuiltInCategory.OST_Levels):
-        try:
-            v3.SetCategoryHidden(ElementId(bic), True)
-        except Exception:
-            pass
+    try:
+        for v in FilteredElementCollector(doc).OfClass(View3D):
+            if v.Name == NOMBRE_3D:
+                v3 = v
+        if v3 is None:
+            vft = [x for x in FilteredElementCollector(doc).OfClass(ViewFamilyType)
+                   if x.ViewFamily == ViewFamily.ThreeDimensional][0]
+            v3 = View3D.CreateIsometric(doc, vft.Id)
+            v3.Name = NOMBRE_3D
+        v3.DisplayStyle = DisplayStyle.ShadingWithEdges
+        v3.DetailLevel = ViewDetailLevel.Fine
+        for bic in (BuiltInCategory.OST_Grids, BuiltInCategory.OST_Levels):
+            try:
+                v3.SetCategoryHidden(ElementId(bic), True)
+            except Exception:
+                pass
+    except Exception as e:
+        aviso("vista 3D", e)
     t.Commit()
     app.SharedParametersFilename = anterior
     try:
-        uidoc.ActiveView = v3
+        uidoc.ActiveView = v3 if v3 is not None else vs
     except Exception:
         log("  (Abra la vista '" + NOMBRE_3D + "' desde el Navegador de proyectos)")
     log("LISTO. Vista 3D: '" + NOMBRE_3D + "'. Schedule: '" + NOMBRE_SCHEDULE + "'.")
